@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
+import Firecrawl from "@mendable/firecrawl-js";
 import type { Business } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -33,10 +34,9 @@ export async function POST(req: Request) {
     const queries = await expandQuery(searchTerm, location);
     console.log(`[search-businesses] expanded into ${queries.length} queries: ${queries.map(q => q.term).join(", ")}`);
 
-    // Step 2: Search all expanded queries on Google + Exa in parallel
+    // Step 2: Search Exa for each expanded query in parallel
     const allPromises: Promise<Business[]>[] = [
-      ...queries.map((q) => searchGoogle(q.term, q.location)),
-      searchExa(searchTerm, location),
+      ...queries.map((q) => searchExa(q.term, q.location)),
     ];
 
     const allResults = await Promise.all(allPromises);
@@ -113,31 +113,31 @@ async function expandQuery(
   }
 }
 
-// --- Google web search via Firecrawl search API ---
+// --- Google web search via Firecrawl SDK ---
+const firecrawl = new Firecrawl({ apiKey: process.env.FIRECRAWL_API_KEY ?? "" });
+
 async function searchGoogle(searchTerm: string, location: string): Promise<Business[]> {
   try {
-    const res = await fetch("https://api.firecrawl.dev/v1/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
-      },
-      body: JSON.stringify({
-        query: `${searchTerm} in ${location} phone number address website`,
-        limit: 5,
-        scrapeOptions: { formats: ["markdown", "links"] },
-      }),
+    const response = await firecrawl.search(`${searchTerm} in ${location} phone number address website`, {
+      limit: 5,
+      scrapeOptions: { formats: ["markdown", "links"] },
     });
 
-    const json = await res.json();
-    if (!json.success || !json.data?.length) {
-      console.error(`[search-businesses] Google search failed or empty`);
+    console.log(`[search-businesses] Firecrawl raw response keys:`, Object.keys(response));
+    const results = response.web ?? [];
+    if (results.length > 0) {
+      console.log(`[search-businesses] First result keys:`, Object.keys(results[0]));
+      console.log(`[search-businesses] First result has markdown:`, !!(results[0] as any).markdown, `links:`, !!(results[0] as any).links);
+      console.log(`[search-businesses] First result url:`, (results[0] as any).url);
+    }
+    if (!results.length) {
+      console.error(`[search-businesses] Google search empty`);
       return [];
     }
 
-    const combined = json.data
-      .map((r: { url?: string; title?: string; markdown?: string; links?: string[] }) => {
-        const links = (r.links || []).filter((l: string) =>
+    const combined = results
+      .map((r: any) => {
+        const links = ((r.links ?? []) as string[]).filter((l: string) =>
           !l.includes("yelp.com") && !l.includes("google.com") &&
           !l.includes("facebook.com") && !l.includes("yellowpages.com") &&
           !l.includes("twitter.com") && !l.includes("instagram.com")
@@ -147,7 +147,7 @@ async function searchGoogle(searchTerm: string, location: string): Promise<Busin
       .join("\n\n---\n\n")
       .slice(0, 30000);
 
-    console.log(`[search-businesses] Google search got ${json.data.length} pages, ${combined.length} chars`);
+    console.log(`[search-businesses] Google search got ${results.length} pages, ${combined.length} chars`);
 
     return extractBusinesses(combined, searchTerm, location, "Google");
   } catch (err) {
@@ -175,7 +175,7 @@ async function searchExa(searchTerm: string, location: string): Promise<Business
         query: `${searchTerm} in ${location}`,
         type: "auto",
         category: "company",
-        numResults: 10,
+        numResults: 20,
         contents: {
           text: { maxCharacters: 3000 },
         },
