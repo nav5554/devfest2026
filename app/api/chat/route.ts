@@ -7,7 +7,7 @@ import {
 } from "ai";
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
-import { executeCommand } from "@/lib/stagehand";
+import { runTask } from "@/lib/browser-use";
 import { placeCall } from "@/lib/caller";
 
 export const maxDuration = 300;
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
           let debugUrl = "";
 
           // Yield preliminary results as status updates stream in
-          const promise = executeCommand(instruction, (event) => {
+          const promise = runTask(instruction, (event) => {
             updates.push(`[${event.type}] ${event.message}`);
             if (event.debugUrl) debugUrl = event.debugUrl;
           });

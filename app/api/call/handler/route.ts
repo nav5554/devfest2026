@@ -35,26 +35,22 @@ export async function POST(request: NextRequest) {
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Play>${baseUrl}/api/call/audio?text=${encodedText}</Play>
-  <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="15">
-    <Say voice="alice">Please respond now.</Say>
-  </Gather>
-  <Say>I didn't hear anything. Let me try again.</Say>
+  <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="15" />
+  <Say voice="Polly.Matthew">Sorry, I didn't catch that. Let me try again.</Say>
   <Redirect method="POST">${baseUrl}/api/call/handler</Redirect>
 </Response>`;
   } else {
     // User responded - generate AI response
     context.transcript.push({ role: "human", text: speechResult });
-    const aiResponse = getResponse(speechResult);
+    const aiResponse = await getResponse(speechResult, callSid);
     context.transcript.push({ role: "ai", text: aiResponse });
     console.log(`[call/handler] user said: "${speechResult}" -> responding: "${aiResponse.slice(0, 80)}..."`);
     const encodedResponse = encodeURIComponent(aiResponse);
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Play>${baseUrl}/api/call/audio?text=${encodedResponse}</Play>
-  <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="15">
-    <Say voice="alice">Please respond.</Say>
-  </Gather>
-  <Say>Let me know if you have any other questions.</Say>
+  <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="15" />
+  <Say voice="Polly.Matthew">Sorry, I didn't catch that.</Say>
   <Redirect method="POST">${baseUrl}/api/call/handler</Redirect>
 </Response>`;
   }

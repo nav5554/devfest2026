@@ -1,8 +1,8 @@
-import { resetStagehand, isSessionActive } from "@/lib/stagehand";
+import { stopActiveSession, isSessionActive } from "@/lib/browser-use";
 import { NextResponse } from "next/server";
 
 export async function POST() {
-  await resetStagehand();
+  await stopActiveSession();
   return NextResponse.json({ success: true, message: "Session reset." });
 }
 

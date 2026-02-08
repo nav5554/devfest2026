@@ -6,11 +6,20 @@ import type { Business } from "@/lib/types";
 
 export const maxDuration = 60;
 
+const bizSchema = z.object({
+  businesses: z.array(
+    z.object({
+      name: z.string().describe("Clean business name, no numbering or markdown"),
+      phone: z.string().describe("Phone in (XXX) XXX-XXXX format, or empty"),
+      address: z.string().describe("Street address, or empty"),
+      website: z.string().describe("Business website URL (not yellowpages/google), or empty"),
+    })
+  ),
+});
+
 export async function POST(req: Request) {
   const { searchTerm, location } = await req.json();
-  console.log(
-    `[search-businesses] searchTerm="${searchTerm}" location="${location}"`
-  );
+  console.log(`[search-businesses] searchTerm="${searchTerm}" location="${location}"`);
 
   if (!searchTerm || !location) {
     return NextResponse.json(
@@ -19,9 +28,96 @@ export async function POST(req: Request) {
     );
   }
 
-  const ypUrl = `https://www.yellowpages.com/search?search_terms=${encodeURIComponent(searchTerm)}&geo_location_terms=${encodeURIComponent(location)}`;
-
   try {
+    // Step 1: Gemini decides whether to expand the query
+    const queries = await expandQuery(searchTerm, location);
+    console.log(`[search-businesses] expanded into ${queries.length} queries: ${queries.map(q => q.term).join(", ")}`);
+
+    // Step 2: Search all expanded queries on YP + one Google search, all in parallel
+    const allPromises: Promise<Business[]>[] = [
+      ...queries.map((q) => searchYellowPages(q.term, q.location)),
+      searchGoogle(searchTerm, location),
+    ];
+
+    const allResults = await Promise.all(allPromises);
+    const flat = allResults.flat();
+    console.log(`[search-businesses] total raw results: ${flat.length}`);
+
+    // Step 3: Merge and deduplicate by normalized name
+    const seen = new Set<string>();
+    const merged: Business[] = [];
+
+    for (const biz of flat) {
+      const key = biz.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (!seen.has(key) && key.length > 1) {
+        seen.add(key);
+        merged.push(biz);
+      }
+    }
+
+    console.log(`[search-businesses] merged=${merged.length} (deduped)`);
+
+    return NextResponse.json({
+      searchTerm,
+      location,
+      businesses: merged.slice(0, 75),
+    });
+  } catch (err) {
+    console.error(`[search-businesses] error:`, err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Search failed" },
+      { status: 500 }
+    );
+  }
+}
+
+// --- Gemini query expansion ---
+async function expandQuery(
+  searchTerm: string,
+  location: string
+): Promise<{ term: string; location: string }[]> {
+  try {
+    const { object } = await generateObject({
+      model: google("gemini-2.5-flash"),
+      schema: z.object({
+        queries: z.array(
+          z.object({
+            term: z.string().describe("Search term for YellowPages"),
+            location: z.string().describe("Location/city"),
+          })
+        ),
+      }),
+      prompt:
+        `You are helping a sales team find local businesses to call.\n\n` +
+        `The user searched for: "${searchTerm}" in "${location}"\n\n` +
+        `If this is already a SPECIFIC search (e.g. "Korean BBQ", "pediatric dentist", "yoga studio"), ` +
+        `return ONLY the original query as-is. Do not expand specific searches.\n\n` +
+        `If this is a BROAD category (e.g. "restaurants", "doctors", "home services", "shops"), ` +
+        `return 3 more specific subcategory variations that would yield different results on YellowPages. ` +
+        `Keep the same location.\n\n` +
+        `Examples:\n` +
+        `- "restaurants" in "NYC" → ["Italian restaurants", "Chinese restaurants", "Mexican restaurants"] in "NYC"\n` +
+        `- "doctors" in "LA" → ["family doctors", "dentists", "dermatologists"] in "LA"\n` +
+        `- "coffee shops" in "SF" → just ["coffee shops"] in "SF" (already specific enough)\n\n` +
+        `Return 1-3 queries. Always include at least the original or a close variant.`,
+    });
+
+    if (object.queries.length === 0) {
+      return [{ term: searchTerm, location }];
+    }
+
+    return object.queries.slice(0, 3);
+  } catch (err) {
+    console.error("[search-businesses] query expansion error:", err);
+    return [{ term: searchTerm, location }];
+  }
+}
+
+// --- YellowPages scrape ---
+async function searchYellowPages(searchTerm: string, location: string): Promise<Business[]> {
+  try {
+    const ypUrl = `https://www.yellowpages.com/search?search_terms=${encodeURIComponent(searchTerm)}&geo_location_terms=${encodeURIComponent(location)}`;
+
     const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
       method: "POST",
       headers: {
@@ -37,92 +133,111 @@ export async function POST(req: Request) {
 
     const json = await res.json();
     if (!json.success) {
-      console.error(`[search-businesses] scrape failed:`, json.error);
-      return NextResponse.json({
-        error: json.error || "Failed to search YellowPages",
-      });
+      console.error(`[search-businesses] YP scrape failed:`, json.error);
+      return [];
     }
 
     const markdown: string = json.data?.markdown ?? "";
-    console.log(`[search-businesses] got ${markdown.length} chars of markdown`);
+    console.log(`[search-businesses] YP scraped ${markdown.length} chars`);
 
-    // Use Gemini to extract clean structured data from the scraped markdown
-    const businesses = await extractBusinessesWithGemini(
-      markdown,
-      searchTerm,
-      location
-    );
-    console.log(`[search-businesses] extracted ${businesses.length} businesses`);
-
-    return NextResponse.json({
-      searchTerm,
-      location,
-      businesses: businesses.slice(0, 50),
-    });
+    return extractBusinesses(markdown, searchTerm, location, "YellowPages");
   } catch (err) {
-    console.error(`[search-businesses] error:`, err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Search failed" },
-      { status: 500 }
-    );
+    console.error(`[search-businesses] YP error:`, err);
+    return [];
   }
 }
 
-async function extractBusinessesWithGemini(
-  markdown: string,
+// --- Google web search via Firecrawl search API ---
+async function searchGoogle(searchTerm: string, location: string): Promise<Business[]> {
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v1/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: `${searchTerm} in ${location} phone number address`,
+        limit: 5,
+        scrapeOptions: { formats: ["markdown"] },
+      }),
+    });
+
+    const json = await res.json();
+    if (!json.success || !json.data?.length) {
+      console.error(`[search-businesses] Google search failed or empty`);
+      return [];
+    }
+
+    const combined = json.data
+      .map((r: { markdown?: string }) => r.markdown ?? "")
+      .join("\n\n---\n\n")
+      .slice(0, 30000);
+
+    console.log(`[search-businesses] Google search got ${json.data.length} pages, ${combined.length} chars`);
+
+    return extractBusinesses(combined, searchTerm, location, "Google");
+  } catch (err) {
+    console.error(`[search-businesses] Google error:`, err);
+    return [];
+  }
+}
+
+// --- Gemini extraction (shared) ---
+async function extractBusinesses(
+  content: string,
   searchTerm: string,
-  location: string
+  location: string,
+  source: string
 ): Promise<Business[]> {
-  const truncated = markdown.slice(0, 30000);
+  const truncated = content.slice(0, 30000);
 
   try {
     const { object } = await generateObject({
       model: google("gemini-2.5-flash"),
-      schema: z.object({
-        businesses: z.array(
-          z.object({
-            name: z.string().describe("Clean business name, no numbering or markdown"),
-            phone: z.string().describe("Phone in (XXX) XXX-XXXX format, or empty"),
-            address: z.string().describe("Street address, or empty"),
-            website: z.string().describe("Business website URL (not yellowpages), or empty"),
-          })
-        ),
-      }),
+      schema: bizSchema,
       prompt:
-        `Extract REAL business listings from this YellowPages search results page.\n\n` +
+        `Extract REAL business listings from these ${source} search results.\n\n` +
         `Search was for "${searchTerm}" in "${location}".\n\n` +
         `RULES:\n` +
         `- Only include REAL businesses with actual names (not navigation links, ads, or categories)\n` +
         `- Do NOT invent or fabricate any data. If a field is not in the content, use an empty string.\n` +
         `- Clean up names: remove numbering like "1.", markdown artifacts like "[" or "]", backslashes\n` +
         `- Phone numbers should be in (XXX) XXX-XXXX format\n` +
-        `- Do NOT include yellowpages.com URLs as website\n` +
+        `- Do NOT include yellowpages.com or google.com URLs as website\n` +
         `- Extract ALL businesses listed, not just a few. Get every single one.\n\n` +
         `Content:\n${truncated}`,
     });
 
-    console.log(`[search-businesses] extracted ${object.businesses.length} businesses via AI SDK`);
+    console.log(`[search-businesses] ${source}: extracted ${object.businesses.length} via Gemini`);
 
     return object.businesses
       .filter((b) => b.name && b.name.length > 1)
-      .map((b) => ({
-        id: crypto.randomUUID(),
-        name: b.name,
-        phone: b.phone,
-        address: b.address,
-        website: b.website,
-        category: searchTerm,
-        email: "",
-        ownerName: "",
-        ceoPhone: "",
-        about: "",
-        enrichmentStatus: "idle" as const,
-        callStatus: "idle" as const,
-        callSid: "",
-        transcript: [],
-      }));
+      .map((b) => makeBusiness(b, searchTerm));
   } catch (err) {
-    console.error("[search-businesses] AI SDK extraction error:", err);
+    console.error(`[search-businesses] ${source} extraction error:`, err);
     return [];
   }
+}
+
+function makeBusiness(
+  partial: { name: string; phone: string; address: string; website: string },
+  category: string
+): Business {
+  return {
+    id: crypto.randomUUID(),
+    name: partial.name,
+    phone: partial.phone,
+    address: partial.address,
+    website: partial.website,
+    category,
+    email: "",
+    ownerName: "",
+    ceoPhone: "",
+    about: "",
+    enrichmentStatus: "idle" as const,
+    callStatus: "idle" as const,
+    callSid: "",
+    transcript: [],
+  };
 }

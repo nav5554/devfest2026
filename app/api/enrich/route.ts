@@ -1,4 +1,4 @@
-import { executeCommand } from "@/lib/stagehand";
+import { runTask } from "@/lib/browser-use";
 import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
@@ -25,31 +25,40 @@ export async function POST(req: Request) {
 
       try {
         if (mode === "deep" && website) {
-          // Deep mode: Use Stagehand to browse the website
+          // Deep mode: Use Browser Use Cloud to browse the website
           send({ type: "step", message: `Starting deep research on ${name}...` });
 
-          let debugUrl = "";
-          const logs: string[] = [];
-
-          await executeCommand(
-            `Go to ${website}. Look for an About page, Contact page, or Team page. ` +
+          const { output } = await runTask(
+            `Go to ${website}. Your goal is to research this business AND make contact with them.\n\n` +
+            `STEP 1 - RESEARCH: Look for About, Contact, and Team pages. ` +
             `Find the owner's name, CEO name, email addresses, and phone numbers. ` +
-            `Check the footer and header for contact info. ` +
-            `Report everything you find.`,
+            `Check the footer and header for contact info.\n\n` +
+            `STEP 2 - MAKE CONTACT: Try every available channel:\n` +
+            `- If there is a Contact Us form, fill it out with:\n` +
+            `  Name: "Alex from LeadFlow"\n` +
+            `  Email: "alex@leadflow.ai"\n` +
+            `  Phone: "(628) 400-0974"\n` +
+            `  Message: "Hi! I came across ${name} and I'm really impressed with what you do. ` +
+            `I work with local businesses to help them grow their customer base and online presence. ` +
+            `I'd love to chat for a few minutes about some ideas I have specifically for your business. ` +
+            `Would you be open to a quick call this week?"\n` +
+            `- If there is a chat widget, open it and send a similar friendly message.\n` +
+            `- If there is a "Request a Quote" or "Book a Consultation" form, fill it out.\n` +
+            `- Note any email addresses you find (mailto links, text on page).\n\n` +
+            `STEP 3 - REPORT: List everything you found AND what outreach actions you took ` +
+            `(e.g. "Submitted contact form", "Found email: owner@business.com", etc).`,
             (event) => {
-              logs.push(event.message);
-              if (event.debugUrl) debugUrl = event.debugUrl;
+              // Forward all events as "step" so the frontend picks up debugUrl
               send({
                 type: "step",
                 message: event.message,
-                debugUrl: debugUrl || undefined,
+                debugUrl: event.debugUrl,
               });
-            }
+            },
+            website
           );
 
-          // After browser research, try to extract structured data from what was found
-          const browserFindings = logs.join("\n");
-          const extracted = await extractWithGemini(name, browserFindings);
+          const extracted = await extractWithGemini(name, output);
           send({ type: "result", data: extracted });
         } else {
           // Quick mode: Firecrawl scrape + Gemini extraction

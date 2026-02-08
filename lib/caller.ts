@@ -1,4 +1,6 @@
 import twilio from "twilio";
+import { generateText } from "ai";
+import { google } from "@ai-sdk/google";
 
 // --- Types ---
 
@@ -21,8 +23,10 @@ export interface CallContext {
   transcript: { role: "ai" | "human"; text: string }[];
 }
 
-// --- In-memory call context store ---
-export const callContexts = new Map<string, CallContext>();
+// --- In-memory call context store (survives Next.js hot reloads) ---
+const globalForCaller = globalThis as unknown as { callContexts: Map<string, CallContext> };
+globalForCaller.callContexts ??= new Map<string, CallContext>();
+export const callContexts = globalForCaller.callContexts;
 
 // --- Script generation ---
 
@@ -54,56 +58,39 @@ export function generateScript(
   );
 }
 
-// --- Conversational response logic ---
+// --- AI-powered conversational response ---
 
-export function getResponse(userInput: string): string {
-  const lower = userInput.toLowerCase().trim();
+export async function getResponse(userInput: string, callSid?: string): Promise<string> {
+  const context = callSid ? callContexts.get(callSid) : undefined;
 
-  if (["hello", "hi", "hey", "what's up"].some((w) => lower.includes(w))) {
-    return "Hey! Thanks for picking up. I'm calling because I think I can really help your business grow. Are you open to hearing about some upgrade options?";
+  const convoHistory = context?.transcript
+    ?.map((t) => `${t.role === "ai" ? "You" : "Them"}: ${t.text}`)
+    .join("\n") ?? "";
+
+  const companyInfo = context
+    ? `You are calling ${context.companyName}${context.category ? `, a ${context.category} business` : ""}${context.address ? ` located at ${context.address}` : ""}.`
+    : "You are calling a local business.";
+
+  try {
+    const { text } = await generateText({
+      model: google("gemini-2.5-flash"),
+      prompt: `You are a friendly, natural-sounding sales caller. ${companyInfo}
+
+Your goal is to gauge their interest in marketing/growth services and schedule a follow-up meeting. Be conversational, warm, and never pushy. Keep responses to 1-2 sentences max - this is a phone call, not an essay. React naturally to what they say.
+
+Conversation so far:
+${convoHistory}
+
+They just said: "${userInput}"
+
+Respond naturally:`,
+    });
+
+    return text.trim();
+  } catch (err) {
+    console.error("[caller] AI response error:", err);
+    return "That's great to hear! I'd love to tell you more about how we can help. Do you have a minute?";
   }
-
-  if (
-    ["yes", "yeah", "sure", "okay", "ok", "yep", "sounds good", "interested"].some(
-      (w) => lower.includes(w)
-    )
-  ) {
-    return "Awesome! I'm excited to help you out. So, what kind of business are you running? I'd love to understand what you do so I can tailor the best solution for you.";
-  }
-
-  if (
-    ["no", "nope", "nah", "not interested", "not right now"].some((w) =>
-      lower.includes(w)
-    )
-  ) {
-    return "I totally get it - you're probably busy. No pressure at all. Is there maybe a better time I could reach out? Or if you change your mind, just let me know!";
-  }
-
-  if (
-    ["cost", "price", "how much", "expensive", "money", "afford"].some((w) =>
-      lower.includes(w)
-    )
-  ) {
-    return "I totally understand wanting to know about pricing. The cool thing is we have different options depending on what you need, and honestly, a lot of businesses see it pay for itself pretty quickly. Would you be open to a quick chat where we can go over the numbers?";
-  }
-
-  if (
-    ["schedule", "call", "meeting", "time", "when", "later", "tomorrow"].some(
-      (w) => lower.includes(w)
-    )
-  ) {
-    return "Perfect! I'd love to set something up. What works better for you - are you free later today, or would tomorrow be better?";
-  }
-
-  if (
-    ["bye", "goodbye", "thanks", "thank you", "gotta go", "have to go"].some(
-      (w) => lower.includes(w)
-    )
-  ) {
-    return "Absolutely! Thanks so much for your time today. I really appreciate you hearing me out. Have an amazing day!";
-  }
-
-  return "I hear you. I genuinely think we can help your business, and I'd love to show you how. What do you say - want to hear a bit more about what we can do for you?";
 }
 
 // --- ElevenLabs TTS ---
@@ -127,11 +114,11 @@ export async function generateTTS(text: string): Promise<Buffer> {
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_turbo_v2_5",
+        model_id: "eleven_flash_v2_5",
         voice_settings: {
-          stability: 0.4,
-          similarity_boost: 0.75,
-          style: 0.3,
+          stability: 0.65,
+          similarity_boost: 0.8,
+          style: 0.2,
           use_speaker_boost: true,
         },
       }),

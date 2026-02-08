@@ -23,7 +23,17 @@ export async function GET(request: NextRequest) {
   }
 
   const transcript = context.transcript;
-  console.log(`[call-transcript] sid=${callSid} turns=${transcript.length}`);
+  const live = request.nextUrl.searchParams.get("live") === "true";
+  console.log(`[call-transcript] sid=${callSid} turns=${transcript.length} live=${live}`);
+
+  // Skip classification during live calls - just return transcript
+  if (live) {
+    return NextResponse.json({
+      transcript,
+      classification: null,
+      companyName: context.companyName,
+    });
+  }
 
   // Use Gemini to classify interest from transcript
   let classification: "interested" | "not_interested" | "unreachable" | null = null;

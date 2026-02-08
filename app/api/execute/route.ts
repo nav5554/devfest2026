@@ -1,4 +1,4 @@
-import { executeCommand } from "@/lib/stagehand";
+import { runTask } from "@/lib/browser-use";
 import { NextRequest } from "next/server";
 
 export const maxDuration = 300; // 5 min timeout for long agent runs
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      executeCommand(command.trim(), (event) => {
+      runTask(command.trim(), (event) => {
         const data = JSON.stringify(event);
         controller.enqueue(encoder.encode(`data: ${data}\n\n`));
       }).then(() => {

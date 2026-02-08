@@ -23,6 +23,7 @@ import {
   AlertCircleIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ExternalLinkIcon,
 } from "lucide-react";
 import { Fragment } from "react";
 
@@ -99,6 +100,7 @@ function BrowserViewer({
   onClose: () => void;
 }) {
   const [fullscreen, setFullscreen] = useState(false);
+  const [iframeBlocked, setIframeBlocked] = useState(false);
 
   if (fullscreen) {
     return (
@@ -110,6 +112,14 @@ function BrowserViewer({
               LIVE
             </span>
           </span>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-muted hover:bg-accent text-foreground text-xs px-2.5 py-1.5 rounded-md border border-border transition-colors"
+          >
+            <ExternalLinkIcon className="size-3" />
+          </a>
           <button
             onClick={() => setFullscreen(false)}
             className="bg-muted hover:bg-accent text-foreground text-xs px-2.5 py-1.5 rounded-md border border-border transition-colors"
@@ -134,17 +144,54 @@ function BrowserViewer({
 
   return (
     <div className="relative rounded-md overflow-hidden border border-border bg-black">
-      <iframe
-        src={url}
-        className="w-full border-0"
-        style={{ height: 300 }}
-        allow="clipboard-read; clipboard-write"
-      />
+      {iframeBlocked ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-8 px-4 text-center" style={{ height: 300 }}>
+          <span className="flex items-center gap-1 bg-red-500/20 border border-red-500/30 px-2 py-1 rounded-full">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-red-400 text-xs font-semibold">LIVE</span>
+          </span>
+          <p className="text-muted-foreground text-sm">Browser view can&apos;t be embedded here</p>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            <ExternalLinkIcon className="size-3.5" />
+            Watch live in new tab
+          </a>
+        </div>
+      ) : (
+        <iframe
+          src={url}
+          className="w-full border-0"
+          style={{ height: 300 }}
+          allow="clipboard-read; clipboard-write"
+          onError={() => setIframeBlocked(true)}
+          onLoad={(e) => {
+            // Detect if iframe loaded but content was blocked
+            try {
+              const frame = e.currentTarget;
+              if (frame.contentDocument === null) setIframeBlocked(true);
+            } catch {
+              setIframeBlocked(true);
+            }
+          }}
+        />
+      )}
       <div className="absolute top-2 right-2 flex items-center gap-1.5">
         <span className="flex items-center gap-1 bg-red-500/20 border border-red-500/30 px-1.5 py-0.5 rounded-full">
           <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
           <span className="text-red-400 text-[9px] font-semibold">LIVE</span>
         </span>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bg-black/60 hover:bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded transition-colors"
+        >
+          <ExternalLinkIcon className="size-2.5" />
+        </a>
         <button
           onClick={() => setFullscreen(true)}
           className="bg-black/60 hover:bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded transition-colors"
@@ -281,6 +328,7 @@ export default function Dashboard() {
                     enrichmentStatus: "done",
                   },
                 });
+                dispatch({ type: "SET_BROWSER_VIEW", url: "", visible: false });
                 addLog("success", `Enrichment complete for ${business.name}`);
               }
               if (event.type === "error") {
@@ -289,6 +337,7 @@ export default function Dashboard() {
                   id: business.id,
                   updates: { enrichmentStatus: "error" },
                 });
+                dispatch({ type: "SET_BROWSER_VIEW", url: "", visible: false });
                 addLog("error", event.message);
               }
             } catch {
@@ -382,6 +431,20 @@ export default function Dashboard() {
         try {
           const res = await fetch(`/api/call-status?callSid=${callSid}`);
           const data = await res.json();
+
+          // Fetch live transcript on every tick
+          try {
+            const liveRes = await fetch(`/api/call-transcript?callSid=${callSid}&live=true`);
+            const liveData = await liveRes.json();
+            if (liveData.transcript?.length > 0) {
+              dispatch({
+                type: "UPDATE_BUSINESS",
+                id: businessId,
+                updates: { transcript: liveData.transcript },
+              });
+            }
+          } catch {}
+
           if (
             data.status === "completed" ||
             data.status === "failed" ||
@@ -839,19 +902,19 @@ export default function Dashboard() {
             <div ref={logEndRef} />
           </div>
 
-          {/* Browser viewer */}
+          {/* Watch live link */}
           {state.browserViewVisible && state.browserViewUrl && (
-            <div className="border-t border-border p-2">
-              <BrowserViewer
-                url={state.browserViewUrl}
-                onClose={() =>
-                  dispatch({
-                    type: "SET_BROWSER_VIEW",
-                    url: "",
-                    visible: false,
-                  })
-                }
-              />
+            <div className="border-t border-border px-4 py-2">
+              <a
+                href={state.browserViewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                Watch live
+                <ExternalLinkIcon className="size-3" />
+              </a>
             </div>
           )}
         </div>
