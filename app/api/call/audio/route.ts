@@ -1,14 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateTTS } from "@/lib/caller";
+import { generateTTS, audioCache } from "@/lib/caller";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const text = request.nextUrl.searchParams.get("text");
+  // Serve pre-generated audio from cache (instant)
+  const id = request.nextUrl.searchParams.get("id");
+  if (id) {
+    const cached = audioCache.get(id);
+    if (cached) {
+      console.log(`[call/audio] serving cached audio id=${id} (${cached.length} bytes)`);
+      return new NextResponse(new Uint8Array(cached), {
+        headers: { "Content-Type": "audio/mpeg" },
+      });
+    }
+    console.error(`[call/audio] cache miss for id=${id}`);
+  }
 
+  // Fallback: generate on the fly (used for initial script)
+  const text = request.nextUrl.searchParams.get("text");
   if (!text) {
-    console.error(`[call/audio] missing text parameter`);
-    return NextResponse.json({ error: "text parameter is required" }, { status: 400 });
+    console.error(`[call/audio] missing text and id parameters`);
+    return NextResponse.json({ error: "text or id parameter is required" }, { status: 400 });
   }
 
   const decoded = decodeURIComponent(text);

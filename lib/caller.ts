@@ -23,10 +23,16 @@ export interface CallContext {
   transcript: { role: "ai" | "human"; text: string }[];
 }
 
-// --- In-memory call context store (survives Next.js hot reloads) ---
-const globalForCaller = globalThis as unknown as { callContexts: Map<string, CallContext> };
+// --- In-memory stores (survive Next.js hot reloads) ---
+const globalForCaller = globalThis as unknown as {
+  callContexts: Map<string, CallContext>;
+  audioCache: Map<string, Buffer>;
+};
 globalForCaller.callContexts ??= new Map<string, CallContext>();
+globalForCaller.audioCache ??= new Map<string, Buffer>();
+
 export const callContexts = globalForCaller.callContexts;
+export const audioCache = globalForCaller.audioCache;
 
 // --- Script generation ---
 
@@ -36,26 +42,31 @@ export function generateScript(
   address = "",
   _summary = ""
 ): string {
-  let greeting = `Hi, I'm calling ${companyName}`;
-
+  // Build location snippet from address (last part, e.g. "Brooklyn")
+  let location = "";
   if (address) {
     const parts = address.split(",");
     if (parts.length > 1) {
-      const location = parts[parts.length - 1].trim();
-      greeting += ` in ${location}`;
+      location = parts[parts.length - 1].trim();
     }
   }
 
-  let categoryContext = "";
-  if (category) {
-    categoryContext = ` I see you're a ${category.toLowerCase()} business`;
+  // Short, punchy, personalized opener
+  let script = `Hey! Is this ${companyName}?`;
+
+  if (location && category) {
+    script += ` I came across your ${category.toLowerCase()} spot in ${location} and I love what you guys are doing!`;
+  } else if (category) {
+    script += ` I came across your ${category.toLowerCase()} spot and I love what you guys are doing!`;
+  } else if (location) {
+    script += ` I came across your business in ${location} and I love what you guys are doing!`;
+  } else {
+    script += ` I came across your business and I love what you guys are doing!`;
   }
 
-  return (
-    `${greeting}.${categoryContext}. ` +
-    "I'm reaching out because I think I can really help your business grow and reach more customers. " +
-    "Are you free to talk for a quick minute? I'd love to tell you about some options that could really make a difference for your business."
-  );
+  script += ` I have a quick idea that could help bring you more customers — got a sec?`;
+
+  return script;
 }
 
 // --- AI-powered conversational response ---
@@ -73,17 +84,15 @@ export async function getResponse(userInput: string, callSid?: string): Promise<
 
   try {
     const { text } = await generateText({
-      model: google("gemini-2.5-flash"),
-      prompt: `You are a friendly, natural-sounding sales caller. ${companyInfo}
+      model: google("gemini-2.0-flash"),
+      prompt: `Sales call. ${companyInfo}
+Goal: book a 15-min call this week. Be warm but direct — get to the ask fast.
+ONE sentence max. Sound human, not scripted.
+If they seem even slightly open, immediately suggest that they will be contacted by a sales representative soon.
+If they say yes/sure/okay, confirm and wrap up fast. When you wrap up say have a good one and hang up. 
 
-Your goal is to gauge their interest in marketing/growth services and schedule a follow-up meeting. Be conversational, warm, and never pushy. Keep responses to 1-2 sentences max - this is a phone call, not an essay. React naturally to what they say.
-
-Conversation so far:
-${convoHistory}
-
-They just said: "${userInput}"
-
-Respond naturally:`,
+${convoHistory ? `Chat:\n${convoHistory}\n` : ""}Them: "${userInput}"
+You:`,
     });
 
     return text.trim();
@@ -104,7 +113,7 @@ export async function generateTTS(text: string): Promise<Buffer> {
   }
 
   const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?optimize_streaming_latency=4&output_format=mp3_22050_32`,
     {
       method: "POST",
       headers: {

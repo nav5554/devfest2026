@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callContexts, getResponse } from "@/lib/caller";
+import { callContexts, getResponse, generateTTS, audioCache } from "@/lib/caller";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,6 @@ export async function POST(request: NextRequest) {
 
   const baseUrl = process.env.BASE_URL || "http://localhost:3000";
 
-  // Get or create default context
   const context = callContexts.get(callSid) ?? {
     companyName: "",
     category: "",
@@ -19,17 +18,16 @@ export async function POST(request: NextRequest) {
     summary: "",
     website: "",
     script:
-      "Hey! How's it going? I'm calling because I think I can really help your business grow. Are you free to talk for a quick minute?",
+      "Hey! Is this your business? Awesome — I love what you guys are doing! I have a quick idea that could help bring you more customers — got a sec?",
     transcript: [],
   };
 
   let twiml: string;
-
   const hasContext = callContexts.has(callSid);
   console.log(`[call/handler] context found=${hasContext} company="${context.companyName}"`);
 
   if (!speechResult.trim()) {
-    // First message - play personalized script
+    // First message — play personalized script
     console.log(`[call/handler] playing initial script (${context.script.length} chars)`);
     const encodedText = encodeURIComponent(context.script);
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -40,15 +38,22 @@ export async function POST(request: NextRequest) {
   <Redirect method="POST">${baseUrl}/api/call/handler</Redirect>
 </Response>`;
   } else {
-    // User responded - generate AI response
+    // User responded — generate response + TTS, cache audio, serve instantly
     context.transcript.push({ role: "human", text: speechResult });
     const aiResponse = await getResponse(speechResult, callSid);
     context.transcript.push({ role: "ai", text: aiResponse });
-    console.log(`[call/handler] user said: "${speechResult}" -> responding: "${aiResponse.slice(0, 80)}..."`);
-    const encodedResponse = encodeURIComponent(aiResponse);
+
+    // Pre-generate and cache audio so /api/call/audio serves instantly
+    const audioId = `audio-${callSid}-${Date.now()}`;
+    const audioBuffer = await generateTTS(aiResponse);
+    audioCache.set(audioId, audioBuffer);
+    setTimeout(() => audioCache.delete(audioId), 60000);
+
+    console.log(`[call/handler] user: "${speechResult}" -> ai: "${aiResponse.slice(0, 80)}..." (${audioBuffer.length} bytes cached)`);
+
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Play>${baseUrl}/api/call/audio?text=${encodedResponse}</Play>
+  <Play>${baseUrl}/api/call/audio?id=${encodeURIComponent(audioId)}</Play>
   <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="15" />
   <Say voice="Polly.Matthew">Sorry, I didn't catch that.</Say>
   <Redirect method="POST">${baseUrl}/api/call/handler</Redirect>
