@@ -1,416 +1,860 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
-import { useState, Fragment } from "react";
+import { useReducer, useRef, useCallback, useEffect, useState } from "react";
 import {
-  Message,
-  MessageContent,
-  MessageResponse,
-  MessageActions,
-  MessageAction,
-} from "@/components/ai-elements/message";
+  dashboardReducer,
+  initialDashboardState,
+  type Business,
+  type LogEntry,
+} from "@/lib/types";
 import {
-  Conversation,
-  ConversationContent,
-  ConversationEmptyState,
-  ConversationScrollButton,
-} from "@/components/ai-elements/conversation";
-import {
-  PromptInput,
-  PromptInputBody,
-  PromptInputFooter,
-  PromptInputTextarea,
-  PromptInputSubmit,
-  type PromptInputMessage,
-} from "@/components/ai-elements/prompt-input";
-import { CopyIcon, FileTextIcon, GlobeIcon, MaximizeIcon, MinimizeIcon, MonitorIcon, PhoneIcon, SearchIcon, StoreIcon } from "lucide-react";
+  SearchIcon,
+  Trash2Icon,
+  PhoneIcon,
+  SparklesIcon,
+  TelescopeIcon,
+  XIcon,
+  MaximizeIcon,
+  MinimizeIcon,
+  PhoneCallIcon,
+  Loader2Icon,
+  CheckCircleIcon,
+  XCircleIcon,
+  AlertCircleIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+} from "lucide-react";
+import { Fragment } from "react";
 
-function BrowserViewer({ url, isRunning }: { url: string; isRunning: boolean }) {
+// ─── Call Outcome Badge ───────────────────────────────────────────────
+function CallBadge({ status }: { status: Business["callStatus"] }) {
+  switch (status) {
+    case "calling":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/20 text-amber-400">
+          <Loader2Icon className="size-2.5 animate-spin" /> Calling
+        </span>
+      );
+    case "interested":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-500/20 text-green-400">
+          <CheckCircleIcon className="size-2.5" /> Interested
+        </span>
+      );
+    case "not_interested":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/20 text-red-400">
+          <XCircleIcon className="size-2.5" /> Not Interested
+        </span>
+      );
+    case "unreachable":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-500/20 text-zinc-400">
+          <AlertCircleIcon className="size-2.5" /> Unreachable
+        </span>
+      );
+    case "error":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/20 text-red-400">
+          <XCircleIcon className="size-2.5" /> Error
+        </span>
+      );
+    default:
+      return null;
+  }
+}
+
+// ─── Enrichment Badge ─────────────────────────────────────────────────
+function EnrichBadge({ status }: { status: Business["enrichmentStatus"] }) {
+  switch (status) {
+    case "running":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/20 text-purple-400">
+          <Loader2Icon className="size-2.5 animate-spin" /> Researching
+        </span>
+      );
+    case "done":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-500/20 text-blue-400">
+          <CheckCircleIcon className="size-2.5" /> Enriched
+        </span>
+      );
+    case "error":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/20 text-red-400">
+          <XCircleIcon className="size-2.5" /> Failed
+        </span>
+      );
+    default:
+      return null;
+  }
+}
+
+// ─── Browser Viewer ───────────────────────────────────────────────────
+function BrowserViewer({
+  url,
+  onClose,
+}: {
+  url: string;
+  onClose: () => void;
+}) {
   const [fullscreen, setFullscreen] = useState(false);
 
   if (fullscreen) {
     return (
       <div className="fixed inset-0 z-50 bg-black">
         <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-          {isRunning && (
-            <div className="flex items-center gap-1.5 bg-red-500/20 border border-red-500/30 px-2 py-1 rounded-full">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-red-400 text-[10px] font-semibold">LIVE</span>
-            </div>
-          )}
+          <span className="flex items-center gap-1 bg-red-500/20 border border-red-500/30 px-2 py-1 rounded-full">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-red-400 text-[10px] font-semibold">
+              LIVE
+            </span>
+          </span>
           <button
             onClick={() => setFullscreen(false)}
-            className="flex items-center gap-1 bg-muted hover:bg-accent text-foreground text-xs px-2.5 py-1.5 rounded-md border border-border transition-colors"
+            className="bg-muted hover:bg-accent text-foreground text-xs px-2.5 py-1.5 rounded-md border border-border transition-colors"
           >
             <MinimizeIcon className="size-3" />
-            Exit
+          </button>
+          <button
+            onClick={onClose}
+            className="bg-muted hover:bg-accent text-foreground text-xs px-2.5 py-1.5 rounded-md border border-border transition-colors"
+          >
+            <XIcon className="size-3" />
           </button>
         </div>
-        <iframe src={url} className="w-full h-full border-0" allow="clipboard-read; clipboard-write" />
+        <iframe
+          src={url}
+          className="w-full h-full border-0"
+          allow="clipboard-read; clipboard-write"
+        />
       </div>
     );
   }
 
   return (
-    <div className="relative w-full rounded-md overflow-hidden border border-border bg-black" style={{ height: 220 }}>
-      <iframe src={url} className="absolute inset-0 w-full h-full border-0" allow="clipboard-read; clipboard-write" />
+    <div className="relative rounded-md overflow-hidden border border-border bg-black">
+      <iframe
+        src={url}
+        className="w-full border-0"
+        style={{ height: 300 }}
+        allow="clipboard-read; clipboard-write"
+      />
       <div className="absolute top-2 right-2 flex items-center gap-1.5">
-        {isRunning && (
-          <div className="flex items-center gap-1 bg-red-500/20 border border-red-500/30 px-1.5 py-0.5 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-red-400 text-[9px] font-semibold">LIVE</span>
-          </div>
-        )}
+        <span className="flex items-center gap-1 bg-red-500/20 border border-red-500/30 px-1.5 py-0.5 rounded-full">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-red-400 text-[9px] font-semibold">LIVE</span>
+        </span>
         <button
           onClick={() => setFullscreen(true)}
-          className="flex items-center gap-1 bg-black/60 backdrop-blur hover:bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded transition-colors"
+          className="bg-black/60 hover:bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded transition-colors"
         >
           <MaximizeIcon className="size-2.5" />
+        </button>
+        <button
+          onClick={onClose}
+          className="bg-black/60 hover:bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded transition-colors"
+        >
+          <XIcon className="size-2.5" />
         </button>
       </div>
     </div>
   );
 }
 
-export default function Chat() {
-  const [input, setInput] = useState("");
-  const { messages, sendMessage, status } = useChat();
-  const isLoading = status === "streaming" || status === "submitted";
+// ─── Main Dashboard ───────────────────────────────────────────────────
+export default function Dashboard() {
+  const [state, dispatch] = useReducer(dashboardReducer, initialDashboardState);
+  const [searchInput, setSearchInput] = useState("");
+  const [callOutcomeFor, setCallOutcomeFor] = useState<string | null>(null);
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll activity log
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [state.activityLog.length]);
+
+  const addLog = useCallback(
+    (type: LogEntry["type"], message: string) => {
+      dispatch({
+        type: "ADD_LOG",
+        entry: { timestamp: Date.now(), message, type },
+      });
+    },
+    []
+  );
+
+  // ── Search ──────────────────────────────────────────────────────
+  const handleSearch = useCallback(
+    async (query: string) => {
+      if (!query.trim()) return;
+      dispatch({ type: "SET_SEARCH_LOADING", query });
+      addLog("info", `Searching for "${query}"...`);
+
+      const match = query.match(/^(.+?)\s+in\s+(.+)$/i);
+      const searchTerm = match ? match[1].trim() : query;
+      const location = match ? match[2].trim() : "United States";
+
+      try {
+        const res = await fetch("/api/search-businesses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ searchTerm, location }),
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          dispatch({ type: "SET_SEARCH_ERROR", error: data.error });
+          addLog("error", `Search failed: ${data.error}`);
+        } else {
+          dispatch({
+            type: "SET_SEARCH_RESULTS",
+            businesses: data.businesses,
+          });
+          addLog(
+            "success",
+            `Found ${data.businesses.length} businesses for "${searchTerm}" in ${location}`
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Search failed";
+        dispatch({ type: "SET_SEARCH_ERROR", error: msg });
+        addLog("error", msg);
+      }
+    },
+    [addLog]
+  );
+
+  // ── Enrich ──────────────────────────────────────────────────────
+  const handleEnrich = useCallback(
+    async (business: Business, mode: "quick" | "deep") => {
+      dispatch({
+        type: "UPDATE_BUSINESS",
+        id: business.id,
+        updates: { enrichmentStatus: "running" },
+      });
+      addLog(
+        "info",
+        `${mode === "deep" ? "Deep researching" : "Quick enriching"} ${business.name}...`
+      );
+
+      try {
+        const res = await fetch("/api/enrich", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: business.name,
+            website: business.website,
+            address: business.address,
+            mode,
+          }),
+        });
+
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = decoder.decode(value);
+          for (const line of text.split("\n")) {
+            if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === "step") {
+                addLog("info", event.message);
+                if (event.debugUrl) {
+                  dispatch({
+                    type: "SET_BROWSER_VIEW",
+                    url: event.debugUrl,
+                    visible: true,
+                  });
+                }
+              }
+              if (event.type === "result") {
+                dispatch({
+                  type: "UPDATE_BUSINESS",
+                  id: business.id,
+                  updates: {
+                    ...event.data,
+                    enrichmentStatus: "done",
+                  },
+                });
+                addLog("success", `Enrichment complete for ${business.name}`);
+              }
+              if (event.type === "error") {
+                dispatch({
+                  type: "UPDATE_BUSINESS",
+                  id: business.id,
+                  updates: { enrichmentStatus: "error" },
+                });
+                addLog("error", event.message);
+              }
+            } catch {
+              // skip malformed SSE lines
+            }
+          }
+        }
+      } catch (err) {
+        dispatch({
+          type: "UPDATE_BUSINESS",
+          id: business.id,
+          updates: { enrichmentStatus: "error" },
+        });
+        addLog(
+          "error",
+          `Enrichment failed for ${business.name}: ${err instanceof Error ? err.message : "Unknown error"}`
+        );
+      }
+    },
+    [addLog]
+  );
+
+  // ── Call ─────────────────────────────────────────────────────────
+  const handleCall = useCallback(
+    async (business: Business) => {
+      if (!business.phone) {
+        addLog("error", `No phone number for ${business.name}`);
+        return;
+      }
+
+      dispatch({
+        type: "UPDATE_BUSINESS",
+        id: business.id,
+        updates: { callStatus: "calling" },
+      });
+      addLog("info", `Calling ${business.name} at ${business.phone}...`);
+
+      try {
+        const res = await fetch("/api/call-business", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phoneNumber: business.phone,
+            companyName: business.name,
+            address: business.address,
+            category: business.category,
+            website: business.website,
+          }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          dispatch({
+            type: "UPDATE_BUSINESS",
+            id: business.id,
+            updates: { callSid: data.callSid },
+          });
+          addLog(
+            "success",
+            `Call placed to ${business.name}${data.testMode ? " (test mode)" : ""}`
+          );
+
+          // Poll for call completion
+          pollCallStatus(business.id, data.callSid);
+        } else {
+          dispatch({
+            type: "UPDATE_BUSINESS",
+            id: business.id,
+            updates: { callStatus: "error" },
+          });
+          addLog("error", `Call failed: ${data.error}`);
+        }
+      } catch (err) {
+        dispatch({
+          type: "UPDATE_BUSINESS",
+          id: business.id,
+          updates: { callStatus: "error" },
+        });
+        addLog(
+          "error",
+          `Call error: ${err instanceof Error ? err.message : "Unknown"}`
+        );
+      }
+    },
+    [addLog]
+  );
+
+  const pollCallStatus = useCallback(
+    (businessId: string, callSid: string) => {
+      const interval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/call-status?callSid=${callSid}`);
+          const data = await res.json();
+          if (
+            data.status === "completed" ||
+            data.status === "failed" ||
+            data.status === "busy" ||
+            data.status === "no-answer" ||
+            data.status === "canceled"
+          ) {
+            clearInterval(interval);
+            addLog("info", `Call ended (${data.status}). Analyzing transcript...`);
+
+            // Fetch transcript + AI classification
+            try {
+              const txRes = await fetch(`/api/call-transcript?callSid=${callSid}`);
+              const txData = await txRes.json();
+              const transcript = txData.transcript ?? [];
+              const classification = txData.classification;
+
+              dispatch({
+                type: "UPDATE_BUSINESS",
+                id: businessId,
+                updates: {
+                  transcript,
+                  callStatus: classification || (data.status === "completed" ? "unreachable" : "unreachable"),
+                },
+              });
+
+              if (transcript.length > 0) {
+                addLog("success", `Transcript: ${transcript.length} turns. AI classified as: ${classification || "unknown"}`);
+              } else {
+                addLog("info", `No transcript captured.`);
+                setCallOutcomeFor(businessId);
+              }
+            } catch {
+              // Fallback to manual classification
+              dispatch({
+                type: "UPDATE_BUSINESS",
+                id: businessId,
+                updates: { callStatus: data.status === "completed" ? "idle" : "unreachable" },
+              });
+              setCallOutcomeFor(businessId);
+              addLog("info", `Could not get transcript. Classify manually.`);
+            }
+          }
+        } catch {
+          // keep polling
+        }
+      }, 5000);
+
+      // Stop polling after 5 minutes
+      setTimeout(() => clearInterval(interval), 300000);
+    },
+    [addLog]
+  );
+
+  // ── Call All ────────────────────────────────────────────────────
+  const handleCallAll = useCallback(async () => {
+    const callable = state.businesses.filter(
+      (b) => b.phone && b.callStatus === "idle"
+    );
+    if (callable.length === 0) {
+      addLog("info", "No businesses to call.");
+      return;
+    }
+
+    addLog("info", `Starting auto-dial for ${callable.length} businesses...`);
+
+    for (let i = 0; i < callable.length; i++) {
+      dispatch({ type: "SET_AUTO_CALLING", index: i });
+      addLog(
+        "info",
+        `Auto-dial ${i + 1}/${callable.length}: ${callable[i].name}`
+      );
+      await handleCall(callable[i]);
+      // Wait between calls
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    dispatch({ type: "SET_AUTO_CALLING", index: null });
+    addLog("success", "Auto-dial complete.");
+  }, [state.businesses, handleCall, addLog]);
+
+  // ── Classify call outcome ───────────────────────────────────────
+  const classifyCall = useCallback(
+    (
+      businessId: string,
+      outcome: "interested" | "not_interested" | "unreachable"
+    ) => {
+      dispatch({
+        type: "UPDATE_BUSINESS",
+        id: businessId,
+        updates: { callStatus: outcome },
+      });
+      setCallOutcomeFor(null);
+      addLog(
+        outcome === "interested" ? "success" : "info",
+        `Classified as ${outcome.replace("_", " ")}`
+      );
+    },
+    [addLog]
+  );
+
+  const isSearching = state.searchStatus === "loading";
+  const isAutoCalling = state.autoCallingIndex !== null;
 
   return (
-    <div className="flex flex-col h-screen max-w-4xl mx-auto">
-      <Conversation className="flex-1">
-        <ConversationContent className="px-4 py-6 space-y-1">
-          {messages.length === 0 && (
-            <ConversationEmptyState
-              icon={<MonitorIcon className="size-6 text-muted-foreground" />}
-              title="Stagehand Controller"
-              description="Chat with AI or ask it to control a browser."
+    <div className="flex flex-col h-screen bg-background text-foreground">
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <header className="flex items-center justify-between px-6 py-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <PhoneCallIcon className="size-5 text-green-500" />
+          <h1 className="text-lg font-semibold">LeadFlow</h1>
+          <span className="text-xs text-muted-foreground">
+            AI Sales Dashboard
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {state.businesses.length > 0 && (
+            <button
+              onClick={handleCallAll}
+              disabled={isAutoCalling}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
             >
-              <div className="flex flex-wrap gap-2 mt-3 justify-center">
+              {isAutoCalling ? (
+                <Loader2Icon className="size-3 animate-spin" />
+              ) : (
+                <PhoneIcon className="size-3" />
+              )}
+              {isAutoCalling
+                ? `Calling ${(state.autoCallingIndex ?? 0) + 1}/${state.businesses.filter((b) => b.phone && b.callStatus === "idle").length}`
+                : "Call All"}
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* ── Search Bar ─────────────────────────────────────────── */}
+      <div className="px-6 py-4 border-b border-border">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSearch(searchInput);
+          }}
+          className="flex gap-2"
+        >
+          <div className="relative flex-1">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder='Search businesses... e.g. "coffee shops in New York"'
+              className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-border bg-muted/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              autoFocus
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={isSearching || !searchInput.trim()}
+            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-lg bg-foreground text-background hover:bg-foreground/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isSearching ? (
+              <Loader2Icon className="size-4 animate-spin" />
+            ) : (
+              <SearchIcon className="size-4" />
+            )}
+            Search
+          </button>
+        </form>
+      </div>
+
+      {/* ── Main Content ───────────────────────────────────────── */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* ── Business Table ──────────────────────────────────── */}
+        <div className="flex-1 overflow-auto p-6">
+          {state.businesses.length === 0 && state.searchStatus !== "loading" ? (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+              <SearchIcon className="size-12 mb-4 opacity-30" />
+              <p className="text-lg font-medium">No businesses yet</p>
+              <p className="text-sm mt-1">
+                Search for businesses to get started
+              </p>
+              <div className="flex gap-2 mt-4">
                 {[
-                  "Go to wikipedia.org and search for AI",
-                  "Search Google for weather in NYC",
-                  "Go to github.com trending",
-                ].map((suggestion) => (
+                  "coffee shops in New York",
+                  "dentists in San Francisco",
+                  "plumbers in Chicago",
+                ].map((s) => (
                   <button
-                    key={suggestion}
+                    key={s}
                     onClick={() => {
-                      sendMessage({ text: suggestion });
+                      setSearchInput(s);
+                      handleSearch(s);
                     }}
-                    className="text-xs px-3 py-1.5 rounded-full border border-border bg-muted/50 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                    className="text-xs px-3 py-1.5 rounded-full border border-border bg-muted/50 hover:bg-muted transition-colors"
                   >
-                    {suggestion}
+                    {s}
                   </button>
                 ))}
               </div>
-            </ConversationEmptyState>
-          )}
-          {messages.map((message, idx) => (
-            <Fragment key={message.id}>
-              {message.parts.map((part, i) => {
-                switch (part.type) {
-                  case "text":
-                    return (
-                      <Fragment key={`${message.id}-${i}`}>
-                        <Message from={message.role}>
-                          <MessageContent>
-                            <MessageResponse>{part.text}</MessageResponse>
-                          </MessageContent>
-                        </Message>
-                        {message.role === "assistant" &&
-                          idx === messages.length - 1 && (
-                            <MessageActions>
-                              <MessageAction
-                                tooltip="Copy"
-                                onClick={() =>
-                                  navigator.clipboard.writeText(part.text)
-                                }
-                              >
-                                <CopyIcon className="size-3" />
-                              </MessageAction>
-                            </MessageActions>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-muted-foreground text-xs">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium w-6"></th>
+                    <th className="px-3 py-2 text-left font-medium">Name</th>
+                    <th className="px-3 py-2 text-left font-medium">Phone</th>
+                    <th className="px-3 py-2 text-left font-medium">Address</th>
+                    <th className="px-3 py-2 text-left font-medium">Status</th>
+                    <th className="px-3 py-2 text-right font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {state.businesses.map((biz) => (
+                    <Fragment key={biz.id}>
+                    <tr
+                      className={`hover:bg-muted/30 transition-colors cursor-pointer ${
+                        biz.callStatus === "interested"
+                          ? "bg-green-500/5"
+                          : biz.callStatus === "not_interested"
+                            ? "bg-red-500/5"
+                            : ""
+                      }`}
+                      onClick={() => setExpandedRow(expandedRow === biz.id ? null : biz.id)}
+                    >
+                      <td className="px-3 py-2.5 text-muted-foreground">
+                        {expandedRow === biz.id
+                          ? <ChevronUpIcon className="size-3.5" />
+                          : <ChevronDownIcon className="size-3.5" />}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="font-medium text-foreground">
+                          {biz.website ? (
+                            <a
+                              href={biz.website}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {biz.name}
+                            </a>
+                          ) : (
+                            biz.name
                           )}
-                      </Fragment>
-                    );
-                  case "tool-browser": {
-                    const toolPart = part as {
-                      state: string;
-                      output?: unknown;
-                    };
-                    const data = toolPart.output as {
-                      status?: string;
-                      log?: string[];
-                      debugUrl?: string;
-                      summary?: string;
-                    } | null;
-                    const log = data?.log ?? [];
-                    const running =
-                      toolPart.state !== "result" ||
-                      data?.status === "running";
-                    const debugUrl = data?.debugUrl;
-
-                    return (
-                      <Message from="assistant" key={`${message.id}-${i}`}>
-                        <MessageContent>
-                          <div className="space-y-2">
-                            {/* Browser viewer */}
-                            {debugUrl && (
-                              <BrowserViewer url={debugUrl} isRunning={running} />
-                            )}
-                            {/* Status */}
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <GlobeIcon className={`size-3.5 ${running ? "text-amber-400 animate-spin" : "text-green-500"}`} />
-                              <span>
-                                {running
-                                  ? "Executing browser action..."
-                                  : "Browser action complete"}
-                              </span>
+                        </div>
+                        {biz.category && (
+                          <div className="text-[10px] text-muted-foreground mt-0.5">
+                            {biz.category}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                        {biz.phone || "N/A"}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground max-w-[200px] truncate">
+                        {biz.address || "N/A"}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex flex-col gap-1">
+                          <EnrichBadge status={biz.enrichmentStatus} />
+                          <CallBadge status={biz.callStatus} />
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1">
+                          {/* Call outcome picker */}
+                          {callOutcomeFor === biz.id && (
+                            <div className="flex items-center gap-1 mr-2">
+                              <button
+                                onClick={() => classifyCall(biz.id, "interested")}
+                                className="px-2 py-0.5 text-[10px] rounded bg-green-600 hover:bg-green-500 text-white transition-colors"
+                              >
+                                Interested
+                              </button>
+                              <button
+                                onClick={() => classifyCall(biz.id, "not_interested")}
+                                className="px-2 py-0.5 text-[10px] rounded bg-red-600 hover:bg-red-500 text-white transition-colors"
+                              >
+                                Not Int.
+                              </button>
+                              <button
+                                onClick={() => classifyCall(biz.id, "unreachable")}
+                                className="px-2 py-0.5 text-[10px] rounded bg-zinc-600 hover:bg-zinc-500 text-white transition-colors"
+                              >
+                                N/A
+                              </button>
                             </div>
-                            {/* Log */}
-                            {log.length > 0 && (
-                              <details className="text-xs">
-                                <summary className="cursor-pointer text-muted-foreground hover:text-foreground transition-colors">
-                                  {log.length} step{log.length !== 1 ? "s" : ""}
-                                </summary>
-                                <div className="mt-1.5 space-y-0.5 max-h-32 overflow-y-auto rounded-md bg-muted/50 p-2">
-                                  {log.map((line: string, j: number) => (
-                                    <div key={j} className="text-muted-foreground font-mono">
-                                      {line}
+                          )}
+
+                          {/* Quick enrich */}
+                          <button
+                            onClick={() => handleEnrich(biz, "quick")}
+                            disabled={biz.enrichmentStatus === "running"}
+                            title="Quick enrich (Firecrawl + Gemini)"
+                            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
+                          >
+                            <SparklesIcon className="size-3.5" />
+                          </button>
+
+                          {/* Deep enrich */}
+                          <button
+                            onClick={() => handleEnrich(biz, "deep")}
+                            disabled={biz.enrichmentStatus === "running"}
+                            title="Deep research (Stagehand browser)"
+                            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
+                          >
+                            <TelescopeIcon className="size-3.5" />
+                          </button>
+
+                          {/* Call */}
+                          <button
+                            onClick={() => handleCall(biz)}
+                            disabled={!biz.phone || biz.callStatus === "calling" || isAutoCalling}
+                            title="Call this business"
+                            className="p-1.5 rounded hover:bg-green-500/20 text-green-500 hover:text-green-400 disabled:opacity-30 disabled:text-muted-foreground transition-colors"
+                          >
+                            <PhoneIcon className="size-3.5" />
+                          </button>
+
+                          {/* Delete */}
+                          <button
+                            onClick={() => dispatch({ type: "DELETE_BUSINESS", id: biz.id })}
+                            title="Remove"
+                            className="p-1.5 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
+                          >
+                            <Trash2Icon className="size-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {/* ── Expandable detail row ──────────────────────── */}
+                    {expandedRow === biz.id && (
+                      <tr className="bg-muted/10">
+                        <td colSpan={6} className="px-6 py-3">
+                          <div className="grid grid-cols-2 gap-4 text-xs">
+                            {/* Enrichment info */}
+                            <div>
+                              <div className="font-medium text-muted-foreground uppercase tracking-wider text-[10px] mb-2">
+                                Enrichment Data
+                              </div>
+                              {biz.enrichmentStatus === "done" ? (
+                                <div className="space-y-1.5">
+                                  {biz.about && (
+                                    <p className="text-muted-foreground italic mb-2">{biz.about}</p>
+                                  )}
+                                  <div className="flex gap-2">
+                                    <span className="text-muted-foreground w-16 shrink-0">Owner:</span>
+                                    <span className="text-foreground">{biz.ownerName || "—"}</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <span className="text-muted-foreground w-16 shrink-0">Email:</span>
+                                    <span className="text-foreground">{biz.email || "—"}</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <span className="text-muted-foreground w-16 shrink-0">Direct #:</span>
+                                    <span className="text-foreground font-mono">{biz.ceoPhone || "—"}</span>
+                                  </div>
+                                  {biz.website && (
+                                    <div className="flex gap-2">
+                                      <span className="text-muted-foreground w-16 shrink-0">Website:</span>
+                                      <a href={biz.website} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">{biz.website}</a>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : biz.enrichmentStatus === "running" ? (
+                                <div className="flex items-center gap-2 text-muted-foreground">
+                                  <Loader2Icon className="size-3 animate-spin" />
+                                  Researching...
+                                </div>
+                              ) : (
+                                <p className="text-muted-foreground/50">
+                                  Click the sparkle or telescope icon to enrich this business.
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Call transcript */}
+                            <div>
+                              <div className="font-medium text-muted-foreground uppercase tracking-wider text-[10px] mb-2">
+                                Call Transcript
+                              </div>
+                              {biz.transcript.length > 0 ? (
+                                <div className="space-y-1.5 max-h-40 overflow-y-auto rounded-md bg-muted/30 p-2">
+                                  {biz.transcript.map((turn, j) => (
+                                    <div key={j} className="flex gap-2">
+                                      <span className={`shrink-0 font-medium ${turn.role === "ai" ? "text-blue-400" : "text-amber-400"}`}>
+                                        {turn.role === "ai" ? "AI:" : "Them:"}
+                                      </span>
+                                      <span className="text-muted-foreground">{turn.text}</span>
                                     </div>
                                   ))}
                                 </div>
-                              </details>
-                            )}
-                          </div>
-                        </MessageContent>
-                      </Message>
-                    );
-                  }
-                  case "tool-search": {
-                    const toolPart = part as { state: string; output?: unknown };
-                    const data = toolPart.output as {
-                      query?: string;
-                      results?: { url: string; title: string; snippet: string }[];
-                      error?: string;
-                    } | null;
-                    const searching = toolPart.state !== "result";
-
-                    return (
-                      <Message from="assistant" key={`${message.id}-${i}`}>
-                        <MessageContent>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <SearchIcon className={`size-3.5 ${searching ? "animate-pulse text-amber-400" : "text-green-500"}`} />
-                              <span>
-                                {searching
-                                  ? "Searching the web..."
-                                  : data?.error
-                                    ? `Search failed: ${data.error}`
-                                    : `Found ${data?.results?.length ?? 0} results for "${data?.query}"`}
-                              </span>
-                            </div>
-                            {data?.results && data.results.length > 0 && (
-                              <div className="space-y-1.5">
-                                {data.results.map((r, j) => (
-                                  <a
-                                    key={j}
-                                    href={r.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="block rounded-md bg-muted/50 px-2.5 py-2 hover:bg-muted transition-colors"
-                                  >
-                                    <div className="text-xs font-medium text-foreground">{r.title}</div>
-                                    <div className="text-[10px] text-muted-foreground truncate">{r.url}</div>
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </MessageContent>
-                      </Message>
-                    );
-                  }
-                  case "tool-scrape": {
-                    const toolPart = part as { state: string; output?: unknown };
-                    const data = toolPart.output as {
-                      url?: string;
-                      title?: string;
-                      content?: string;
-                      error?: string;
-                    } | null;
-                    const scraping = toolPart.state !== "result";
-
-                    return (
-                      <Message from="assistant" key={`${message.id}-${i}`}>
-                        <MessageContent>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <FileTextIcon className={`size-3.5 ${scraping ? "animate-pulse text-amber-400" : "text-green-500"}`} />
-                              <span>
-                                {scraping
-                                  ? "Scraping page..."
-                                  : data?.error
-                                    ? `Failed: ${data.error}`
-                                    : `Scraped: ${data?.title || data?.url || "page"}`}
-                              </span>
-                            </div>
-                            {data?.content && (
-                              <details className="text-xs">
-                                <summary className="cursor-pointer text-muted-foreground hover:text-foreground transition-colors">
-                                  View scraped content
-                                </summary>
-                                <div className="mt-1.5 max-h-48 overflow-y-auto rounded-md bg-muted/50 p-2 text-muted-foreground font-mono whitespace-pre-wrap">
-                                  {data.content.slice(0, 2000)}
-                                  {data.content.length > 2000 && "..."}
+                              ) : biz.callStatus === "calling" ? (
+                                <div className="flex items-center gap-2 text-muted-foreground">
+                                  <Loader2Icon className="size-3 animate-spin" />
+                                  Call in progress...
                                 </div>
-                              </details>
-                            )}
-                          </div>
-                        </MessageContent>
-                      </Message>
-                    );
-                  }
-                  case "tool-find_businesses": {
-                    const toolPart = part as { state: string; output?: unknown };
-                    const data = toolPart.output as {
-                      searchTerm?: string;
-                      location?: string;
-                      businesses?: { name: string; phone: string; address: string; website: string; category: string }[];
-                      error?: string;
-                    } | null;
-                    const loading = toolPart.state !== "result";
-
-                    return (
-                      <Message from="assistant" key={`${message.id}-${i}`}>
-                        <MessageContent>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <StoreIcon className={`size-3.5 ${loading ? "animate-pulse text-amber-400" : "text-green-500"}`} />
-                              <span>
-                                {loading
-                                  ? "Finding businesses..."
-                                  : data?.error
-                                    ? `Error: ${data.error}`
-                                    : `Found ${data?.businesses?.length ?? 0} businesses for "${data?.searchTerm}" in ${data?.location}`}
-                              </span>
+                              ) : (
+                                <p className="text-muted-foreground/50">
+                                  No call transcript yet.
+                                </p>
+                              )}
                             </div>
-                            {data?.businesses && data.businesses.length > 0 && (
-                              <div className="overflow-x-auto rounded-md border border-border">
-                                <table className="w-full text-xs">
-                                  <thead className="bg-muted/50 text-muted-foreground">
-                                    <tr>
-                                      <th className="px-2 py-1.5 text-left font-medium">Name</th>
-                                      <th className="px-2 py-1.5 text-left font-medium">Phone</th>
-                                      <th className="px-2 py-1.5 text-left font-medium">Address</th>
-                                      <th className="px-2 py-1.5 text-left font-medium">Action</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-border">
-                                    {data.businesses.map((biz, j) => (
-                                      <tr key={j} className="hover:bg-muted/30 transition-colors">
-                                        <td className="px-2 py-1.5 font-medium text-foreground">
-                                          {biz.website ? (
-                                            <a href={biz.website} target="_blank" rel="noopener noreferrer" className="hover:underline">{biz.name}</a>
-                                          ) : biz.name}
-                                        </td>
-                                        <td className="px-2 py-1.5 text-muted-foreground font-mono">{biz.phone || "N/A"}</td>
-                                        <td className="px-2 py-1.5 text-muted-foreground max-w-[200px] truncate">{biz.address || "N/A"}</td>
-                                        <td className="px-2 py-1.5">
-                                          {biz.phone && (
-                                            <button
-                                              onClick={() => {
-                                                sendMessage({ text: `Call ${biz.name} at ${biz.phone}` });
-                                              }}
-                                              className="flex items-center gap-1 text-[10px] bg-green-600 hover:bg-green-500 text-white px-2 py-0.5 rounded transition-colors"
-                                            >
-                                              <PhoneIcon className="size-2.5" />
-                                              Call
-                                            </button>
-                                          )}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
                           </div>
-                        </MessageContent>
-                      </Message>
-                    );
-                  }
-                  case "tool-call_business": {
-                    const toolPart = part as { state: string; output?: unknown };
-                    const data = toolPart.output as {
-                      success?: boolean;
-                      callSid?: string;
-                      toNumber?: string;
-                      companyName?: string;
-                      testMode?: boolean;
-                      error?: string;
-                    } | null;
-                    const calling = toolPart.state !== "result";
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
-                    return (
-                      <Message from="assistant" key={`${message.id}-${i}`}>
-                        <MessageContent>
-                          <div className="flex items-center gap-2 text-xs">
-                            <PhoneIcon className={`size-3.5 ${calling ? "animate-pulse text-green-400" : data?.success ? "text-green-500" : "text-red-500"}`} />
-                            <span className="text-muted-foreground">
-                              {calling
-                                ? "Placing call..."
-                                : data?.error
-                                  ? `Call failed: ${data.error}`
-                                  : `Called ${data?.companyName} at ${data?.toNumber}${data?.testMode ? " (test mode)" : ""}`}
-                            </span>
-                            {data?.callSid && (
-                              <span className="text-[10px] text-muted-foreground/50 font-mono">
-                                SID: {data.callSid.slice(0, 12)}...
-                              </span>
-                            )}
-                          </div>
-                        </MessageContent>
-                      </Message>
-                    );
-                  }
-                  default:
-                    return null;
+        {/* ── Activity Panel ──────────────────────────────────── */}
+        <div className="w-80 border-l border-border flex flex-col bg-muted/20">
+          <div className="px-4 py-3 border-b border-border text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Activity
+          </div>
+
+          {/* Log entries */}
+          <div className="flex-1 overflow-auto px-4 py-2 space-y-1">
+            {state.activityLog.length === 0 ? (
+              <p className="text-xs text-muted-foreground/50 mt-4 text-center">
+                Activity will appear here
+              </p>
+            ) : (
+              state.activityLog.map((entry, i) => (
+                <div key={i} className="flex gap-2 text-xs py-1">
+                  <span className="text-muted-foreground/50 font-mono shrink-0">
+                    {new Date(entry.timestamp).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </span>
+                  <span
+                    className={
+                      entry.type === "error"
+                        ? "text-red-400"
+                        : entry.type === "success"
+                          ? "text-green-400"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    {entry.message}
+                  </span>
+                </div>
+              ))
+            )}
+            <div ref={logEndRef} />
+          </div>
+
+          {/* Browser viewer */}
+          {state.browserViewVisible && state.browserViewUrl && (
+            <div className="border-t border-border p-2">
+              <BrowserViewer
+                url={state.browserViewUrl}
+                onClose={() =>
+                  dispatch({
+                    type: "SET_BROWSER_VIEW",
+                    url: "",
+                    visible: false,
+                  })
                 }
-              })}
-            </Fragment>
-          ))}
-        </ConversationContent>
-        <ConversationScrollButton />
-      </Conversation>
-
-      {/* Input */}
-      <div className="p-4">
-        <PromptInput
-          onSubmit={(message: PromptInputMessage) => {
-            if (message.text?.trim()) {
-              sendMessage({ text: message.text });
-              setInput("");
-            }
-          }}
-          className="mt-2"
-        >
-          <PromptInputBody>
-            <PromptInputTextarea
-              value={input}
-              onChange={(e) => setInput(e.currentTarget.value)}
-              placeholder="Chat or give a browser command..."
-              autoFocus
-            />
-          </PromptInputBody>
-          <PromptInputFooter>
-            <div />
-            <PromptInputSubmit
-              status={isLoading ? "streaming" : "ready"}
-              disabled={!input.trim() && !isLoading}
-            />
-          </PromptInputFooter>
-        </PromptInput>
+              />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

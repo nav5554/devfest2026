@@ -18,6 +18,7 @@ export interface CallContext {
   summary: string;
   website: string;
   script: string;
+  transcript: { role: "ai" | "human"; text: string }[];
 }
 
 // --- In-memory call context store ---
@@ -204,6 +205,7 @@ export async function placeCall(request: CallRequest): Promise<{
     summary: request.summary || "",
     website: request.website || "",
     script,
+    transcript: [{ role: "ai", text: script }],
   });
 
   return {

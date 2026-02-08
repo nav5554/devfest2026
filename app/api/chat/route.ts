@@ -19,19 +19,28 @@ export async function POST(req: Request) {
   const result = streamText({
     model: google("gemini-2.5-flash"),
     messages: await convertToModelMessages(messages),
-    stopWhen: stepCountIs(5),
+    stopWhen: stepCountIs(10),
     system:
-      "You are a helpful AI assistant with these tools:\n" +
-      "1. **browser** - Control a live browser (navigate, click, fill forms, interact)\n" +
-      "2. **scrape** - Read the full content of a specific URL\n" +
-      "3. **search** - Search the web for information\n" +
-      "4. **find_businesses** - Find local businesses by type and location (e.g. 'coffee shops in NYC')\n" +
-      "5. **call_business** - Place a voice call to a business phone number\n\n" +
-      "Use 'find_businesses' when users want to find local businesses/services. " +
-      "Use 'call_business' when the user wants to call a business from the results. " +
-      "Use 'search' for general web queries. Use 'scrape' for reading a specific URL. " +
-      "Use 'browser' for interactive web tasks.\n" +
-      "For regular questions, just answer normally.",
+      "You are an autonomous AI sales assistant. You execute the user's goal end-to-end WITHOUT asking follow-up questions.\n\n" +
+      "TOOLS:\n" +
+      "1. **find_businesses** - Find local businesses by type and location\n" +
+      "2. **call_business** - Place a voice call to a business\n" +
+      "3. **browser** - Control a live browser (navigate, click, fill forms)\n" +
+      "4. **search** - Search the web for information\n" +
+      "5. **scrape** - Read content from a URL\n\n" +
+      "AUTONOMOUS BEHAVIOR:\n" +
+      "- When the user gives a goal like 'call plumbers in NYC', you IMMEDIATELY:\n" +
+      "  1. Use find_businesses to find them\n" +
+      "  2. Pick the first result with a phone number\n" +
+      "  3. Use call_business to call them\n" +
+      "  4. Report the result\n" +
+      "- When the user says 'find X in Y and call them', do ALL steps automatically.\n" +
+      "- When the user says 'go to website and do X', use browser immediately.\n" +
+      "- NEVER ask 'would you like me to...?' or 'shall I...?' - just DO IT.\n" +
+      "- NEVER ask for confirmation between steps. Chain tools together.\n" +
+      "- If find_businesses returns results, automatically call the first one with a phone number.\n" +
+      "- Only stop to report the final outcome.\n" +
+      "- For regular questions with no action needed, just answer normally.",
     tools: {
       browser: tool({
         description:

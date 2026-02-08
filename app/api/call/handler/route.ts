@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
     website: "",
     script:
       "Hey! How's it going? I'm calling because I think I can really help your business grow. Are you free to talk for a quick minute?",
+    transcript: [],
   };
 
   let twiml: string;
@@ -42,7 +43,9 @@ export async function POST(request: NextRequest) {
 </Response>`;
   } else {
     // User responded - generate AI response
+    context.transcript.push({ role: "human", text: speechResult });
     const aiResponse = getResponse(speechResult);
+    context.transcript.push({ role: "ai", text: aiResponse });
     console.log(`[call/handler] user said: "${speechResult}" -> responding: "${aiResponse.slice(0, 80)}..."`);
     const encodedResponse = encodeURIComponent(aiResponse);
     twiml = `<?xml version="1.0" encoding="UTF-8"?>

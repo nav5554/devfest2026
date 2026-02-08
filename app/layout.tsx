@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Stagehand Controller",
-  description: "AI-powered browser automation",
+  title: "LeadFlow",
+  description: "AI-powered sales lead generation",
 };
 
 export default function RootLayout({
