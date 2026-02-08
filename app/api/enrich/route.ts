@@ -164,7 +164,7 @@ async function extractWithGemini(
 
   try {
     const { object } = await generateObject({
-      model: google("gemini-2.5-pro"),
+      model: google("gemini-2.5-flash"),
       schema: z.object({
         ownerName: z.string().describe("Owner's, founder's, or CEO's full name. Empty if not found."),
         email: z.string().describe("Contact email address. Empty if not found."),

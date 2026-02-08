@@ -50,7 +50,7 @@ async function classifyInterest(
 
   try {
     const { text } = await generateText({
-      model: google("gemini-2.5-pro"),
+      model: google("gemini-2.5-flash"),
       prompt:
         `Analyze this sales call transcript and classify the business's response.\n\n` +
         `Transcript:\n${convo}\n\n` +
