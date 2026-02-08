@@ -33,10 +33,10 @@ export async function POST(req: Request) {
     const queries = await expandQuery(searchTerm, location);
     console.log(`[search-businesses] expanded into ${queries.length} queries: ${queries.map(q => q.term).join(", ")}`);
 
-    // Step 2: Search all expanded queries on YP + one Google search, all in parallel
+    // Step 2: Search all expanded queries on Google + Exa in parallel
     const allPromises: Promise<Business[]>[] = [
-      ...queries.map((q) => searchYellowPages(q.term, q.location)),
-      searchGoogle(searchTerm, location),
+      ...queries.map((q) => searchGoogle(q.term, q.location)),
+      searchExa(searchTerm, location),
     ];
 
     const allResults = await Promise.all(allPromises);
@@ -113,40 +113,6 @@ async function expandQuery(
   }
 }
 
-// --- YellowPages scrape ---
-async function searchYellowPages(searchTerm: string, location: string): Promise<Business[]> {
-  try {
-    const ypUrl = `https://www.yellowpages.com/search?search_terms=${encodeURIComponent(searchTerm)}&geo_location_terms=${encodeURIComponent(location)}`;
-
-    const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
-      },
-      body: JSON.stringify({
-        url: ypUrl,
-        formats: ["markdown"],
-        onlyMainContent: true,
-      }),
-    });
-
-    const json = await res.json();
-    if (!json.success) {
-      console.error(`[search-businesses] YP scrape failed:`, json.error);
-      return [];
-    }
-
-    const markdown: string = json.data?.markdown ?? "";
-    console.log(`[search-businesses] YP scraped ${markdown.length} chars`);
-
-    return extractBusinesses(markdown, searchTerm, location, "YellowPages");
-  } catch (err) {
-    console.error(`[search-businesses] YP error:`, err);
-    return [];
-  }
-}
-
 // --- Google web search via Firecrawl search API ---
 async function searchGoogle(searchTerm: string, location: string): Promise<Business[]> {
   try {
@@ -157,9 +123,9 @@ async function searchGoogle(searchTerm: string, location: string): Promise<Busin
         Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
       },
       body: JSON.stringify({
-        query: `${searchTerm} in ${location} phone number address`,
+        query: `${searchTerm} in ${location} phone number address website`,
         limit: 5,
-        scrapeOptions: { formats: ["markdown"] },
+        scrapeOptions: { formats: ["markdown", "links"] },
       }),
     });
 
@@ -170,7 +136,14 @@ async function searchGoogle(searchTerm: string, location: string): Promise<Busin
     }
 
     const combined = json.data
-      .map((r: { markdown?: string }) => r.markdown ?? "")
+      .map((r: { url?: string; title?: string; markdown?: string; links?: string[] }) => {
+        const links = (r.links || []).filter((l: string) =>
+          !l.includes("yelp.com") && !l.includes("google.com") &&
+          !l.includes("facebook.com") && !l.includes("yellowpages.com") &&
+          !l.includes("twitter.com") && !l.includes("instagram.com")
+        ).slice(0, 20);
+        return `Source URL: ${r.url || ""}\nTitle: ${r.title || ""}\n${r.markdown || ""}\n\nLinks found on page:\n${links.join("\n")}`;
+      })
       .join("\n\n---\n\n")
       .slice(0, 30000);
 
@@ -179,6 +152,53 @@ async function searchGoogle(searchTerm: string, location: string): Promise<Busin
     return extractBusinesses(combined, searchTerm, location, "Google");
   } catch (err) {
     console.error(`[search-businesses] Google error:`, err);
+    return [];
+  }
+}
+
+// --- Exa company search ---
+async function searchExa(searchTerm: string, location: string): Promise<Business[]> {
+  const apiKey = process.env.EXA_API_KEY;
+  if (!apiKey) {
+    console.log("[search-businesses] EXA_API_KEY not set, skipping Exa search");
+    return [];
+  }
+
+  try {
+    const res = await fetch("https://api.exa.ai/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        query: `${searchTerm} in ${location}`,
+        type: "auto",
+        category: "company",
+        numResults: 10,
+        contents: {
+          text: { maxCharacters: 3000 },
+        },
+      }),
+    });
+
+    const json = await res.json();
+    if (!json.results?.length) {
+      console.log("[search-businesses] Exa search returned no results");
+      return [];
+    }
+
+    const combined = json.results
+      .map((r: { title?: string; url?: string; text?: string }) =>
+        `${r.title || ""}\n${r.url || ""}\n${r.text || ""}`)
+      .join("\n\n---\n\n")
+      .slice(0, 30000);
+
+    console.log(`[search-businesses] Exa search got ${json.results.length} results, ${combined.length} chars`);
+
+    return extractBusinesses(combined, searchTerm, location, "Exa");
+  } catch (err) {
+    console.error("[search-businesses] Exa error:", err);
     return [];
   }
 }
@@ -204,7 +224,9 @@ async function extractBusinesses(
         `- Do NOT invent or fabricate any data. If a field is not in the content, use an empty string.\n` +
         `- Clean up names: remove numbering like "1.", markdown artifacts like "[" or "]", backslashes\n` +
         `- Phone numbers should be in (XXX) XXX-XXXX format\n` +
-        `- Do NOT include yellowpages.com or google.com URLs as website\n` +
+        `- Do NOT include yellowpages.com, google.com, yelp.com, or other directory URLs as website\n` +
+        `- If a "Source URL" is the business's own domain (not a directory/aggregator), use it as the website\n` +
+        `- Check "Links found on page" for business websites - match links to businesses by domain name similarity\n` +
         `- Extract ALL businesses listed, not just a few. Get every single one.\n\n` +
         `Content:\n${truncated}`,
     });
@@ -213,7 +235,7 @@ async function extractBusinesses(
 
     return object.businesses
       .filter((b) => b.name && b.name.length > 1)
-      .map((b) => makeBusiness(b, searchTerm));
+      .map((b) => makeBusiness(b, searchTerm, source as Business["source"]));
   } catch (err) {
     console.error(`[search-businesses] ${source} extraction error:`, err);
     return [];
@@ -222,7 +244,8 @@ async function extractBusinesses(
 
 function makeBusiness(
   partial: { name: string; phone: string; address: string; website: string },
-  category: string
+  category: string,
+  source: Business["source"]
 ): Business {
   return {
     id: crypto.randomUUID(),
@@ -239,5 +262,6 @@ function makeBusiness(
     callStatus: "idle" as const,
     callSid: "",
     transcript: [],
+    source,
   };
 }

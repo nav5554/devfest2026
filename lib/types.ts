@@ -19,6 +19,7 @@ export interface Business {
     | "error";
   callSid: string;
   transcript: { role: "ai" | "human"; text: string }[];
+  source?: "Google" | "Exa";
 }
 
 export interface LogEntry {

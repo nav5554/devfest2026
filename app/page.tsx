@@ -692,11 +692,22 @@ export default function Dashboard() {
                             biz.name
                           )}
                         </div>
-                        {biz.category && (
-                          <div className="text-[10px] text-muted-foreground mt-0.5">
-                            {biz.category}
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          {biz.category && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {biz.category}
+                            </span>
+                          )}
+                          {biz.source && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                              biz.source === "Exa"
+                                ? "bg-violet-500/20 text-violet-400"
+                                : "bg-blue-500/20 text-blue-400"
+                            }`}>
+                              {biz.source}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
                         {biz.phone || "N/A"}
