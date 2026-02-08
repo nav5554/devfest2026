@@ -20,6 +20,8 @@ export interface Business {
   callSid: string;
   transcript: { role: "ai" | "human"; text: string }[];
   source?: "Google" | "Exa";
+  contactStatus?: "idle" | "running" | "done" | "error";
+  contactOutcome?: "contacted" | "not_contacted";
 }
 
 export interface LogEntry {

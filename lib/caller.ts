@@ -84,7 +84,7 @@ export async function getResponse(userInput: string, callSid?: string): Promise<
 
   try {
     const { text } = await generateText({
-      model: google("gemini-2.0-flash"),
+      model: google("gemini-2.5-flash-lite"),
       prompt: `Sales call. ${companyInfo}
 Goal: book a 15-min call this week. Be warm but direct — get to the ask fast.
 ONE sentence max. Sound human, not scripted.

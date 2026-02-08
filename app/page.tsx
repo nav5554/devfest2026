@@ -12,7 +12,7 @@ import {
   Trash2Icon,
   PhoneIcon,
   SparklesIcon,
-  TelescopeIcon,
+  MousePointerIcon,
   XIcon,
   MaximizeIcon,
   MinimizeIcon,
@@ -84,6 +84,39 @@ function EnrichBadge({ status }: { status: Business["enrichmentStatus"] }) {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/20 text-red-400">
           <XCircleIcon className="size-2.5" /> Failed
+        </span>
+      );
+    default:
+      return null;
+  }
+}
+
+// ─── Contact Badge ───────────────────────────────────────────────
+function ContactBadge({ status, outcome }: { status?: Business["contactStatus"]; outcome?: Business["contactOutcome"] }) {
+  switch (status) {
+    case "running":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-sky-500/20 text-sky-400">
+          <Loader2Icon className="size-2.5 animate-spin" /> Contacting
+        </span>
+      );
+    case "done":
+      if (outcome === "contacted") {
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-sky-500/20 text-sky-400">
+            <CheckCircleIcon className="size-2.5" /> Successfully Contacted
+          </span>
+        );
+      }
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/20 text-red-400">
+          <XCircleIcon className="size-2.5" /> Failed to Message
+        </span>
+      );
+    case "error":
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/20 text-red-400">
+          <XCircleIcon className="size-2.5" /> Failed to Message
         </span>
       );
     default:
@@ -215,7 +248,17 @@ export default function Dashboard() {
   const [searchInput, setSearchInput] = useState("");
   const [callOutcomeFor, setCallOutcomeFor] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  const toggleFilter = useCallback((filter: string) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(filter)) next.delete(filter);
+      else next.add(filter);
+      return next;
+    });
+  }, []);
 
   // Auto-scroll activity log
   useEffect(() => {
@@ -276,15 +319,21 @@ export default function Dashboard() {
   // ── Enrich ──────────────────────────────────────────────────────
   const handleEnrich = useCallback(
     async (business: Business, mode: "quick" | "deep") => {
-      dispatch({
-        type: "UPDATE_BUSINESS",
-        id: business.id,
-        updates: { enrichmentStatus: "running" },
-      });
-      addLog(
-        "info",
-        `${mode === "deep" ? "Deep researching" : "Quick enriching"} ${business.name}...`
-      );
+      if (mode === "deep") {
+        dispatch({
+          type: "UPDATE_BUSINESS",
+          id: business.id,
+          updates: { contactStatus: "running" },
+        });
+        addLog("info", `Contacting ${business.name}...`);
+      } else {
+        dispatch({
+          type: "UPDATE_BUSINESS",
+          id: business.id,
+          updates: { enrichmentStatus: "running" },
+        });
+        addLog("info", `Quick enriching ${business.name}...`);
+      }
 
       try {
         const res = await fetch("/api/enrich", {
@@ -325,20 +374,28 @@ export default function Dashboard() {
                   id: business.id,
                   updates: {
                     ...event.data,
-                    enrichmentStatus: "done",
+                    ...(mode === "deep"
+                      ? { contactStatus: "done" as const, contactOutcome: "contacted" as const }
+                      : { enrichmentStatus: "done" as const }),
                   },
                 });
                 dispatch({ type: "SET_BROWSER_VIEW", url: "", visible: false });
-                addLog("success", `Enrichment complete for ${business.name}`);
+                addLog("success", mode === "deep"
+                  ? `Contact complete for ${business.name}`
+                  : `Enrichment complete for ${business.name}`);
               }
               if (event.type === "error") {
                 dispatch({
                   type: "UPDATE_BUSINESS",
                   id: business.id,
-                  updates: { enrichmentStatus: "error" },
+                  updates: mode === "deep"
+                    ? { contactStatus: "error" as const }
+                    : { enrichmentStatus: "error" as const },
                 });
                 dispatch({ type: "SET_BROWSER_VIEW", url: "", visible: false });
-                addLog("error", event.message);
+                addLog("error", mode === "deep"
+                  ? `Contact failed for ${business.name}`
+                  : event.message);
               }
             } catch {
               // skip malformed SSE lines
@@ -349,11 +406,15 @@ export default function Dashboard() {
         dispatch({
           type: "UPDATE_BUSINESS",
           id: business.id,
-          updates: { enrichmentStatus: "error" },
+          updates: mode === "deep"
+            ? { contactStatus: "error" as const }
+            : { enrichmentStatus: "error" as const },
         });
         addLog(
           "error",
-          `Enrichment failed for ${business.name}: ${err instanceof Error ? err.message : "Unknown error"}`
+          mode === "deep"
+            ? `Contact failed for ${business.name}: ${err instanceof Error ? err.message : "Unknown error"}`
+            : `Enrichment failed for ${business.name}: ${err instanceof Error ? err.message : "Unknown error"}`
         );
       }
     },
@@ -499,32 +560,28 @@ export default function Dashboard() {
     [addLog]
   );
 
-  // ── Call All ────────────────────────────────────────────────────
-  const handleCallAll = useCallback(async () => {
-    const callable = state.businesses.filter(
-      (b) => b.phone && b.callStatus === "idle"
+  // ── Enrich All ──────────────────────────────────────────────────
+  const [isEnrichingAll, setIsEnrichingAll] = useState(false);
+  const handleEnrichAll = useCallback(async () => {
+    const enrichable = state.businesses.filter(
+      (b) => b.enrichmentStatus === "idle"
     );
-    if (callable.length === 0) {
-      addLog("info", "No businesses to call.");
+    if (enrichable.length === 0) {
+      addLog("info", "No businesses to enrich.");
       return;
     }
 
-    addLog("info", `Starting auto-dial for ${callable.length} businesses...`);
+    setIsEnrichingAll(true);
+    addLog("info", `Enriching ${enrichable.length} businesses...`);
 
-    for (let i = 0; i < callable.length; i++) {
-      dispatch({ type: "SET_AUTO_CALLING", index: i });
-      addLog(
-        "info",
-        `Auto-dial ${i + 1}/${callable.length}: ${callable[i].name}`
-      );
-      await handleCall(callable[i]);
-      // Wait between calls
-      await new Promise((r) => setTimeout(r, 3000));
+    for (let i = 0; i < enrichable.length; i++) {
+      addLog("info", `Enriching ${i + 1}/${enrichable.length}: ${enrichable[i].name}`);
+      await handleEnrich(enrichable[i], "quick");
     }
 
-    dispatch({ type: "SET_AUTO_CALLING", index: null });
-    addLog("success", "Auto-dial complete.");
-  }, [state.businesses, handleCall, addLog]);
+    setIsEnrichingAll(false);
+    addLog("success", "Enrich all complete.");
+  }, [state.businesses, handleEnrich, addLog]);
 
   // ── Classify call outcome ───────────────────────────────────────
   const classifyCall = useCallback(
@@ -547,7 +604,19 @@ export default function Dashboard() {
   );
 
   const isSearching = state.searchStatus === "loading";
-  const isAutoCalling = state.autoCallingIndex !== null;
+
+  // Filter businesses based on active filters
+  const filteredBusinesses = state.businesses.filter((biz) => {
+    if (activeFilters.size === 0) return true;
+    if (activeFilters.has("interested") && biz.callStatus === "interested") return true;
+    if (activeFilters.has("not_interested") && biz.callStatus === "not_interested") return true;
+    if (activeFilters.has("unreachable") && biz.callStatus === "unreachable") return true;
+    if (activeFilters.has("contacted") && biz.contactOutcome === "contacted") return true;
+    if (activeFilters.has("contact_failed") && (biz.contactStatus === "error" || (biz.contactStatus === "done" && biz.contactOutcome === "not_contacted"))) return true;
+    if (activeFilters.has("enriched") && biz.enrichmentStatus === "done") return true;
+    if (activeFilters.has("not_started") && biz.callStatus === "idle" && biz.enrichmentStatus === "idle" && (!biz.contactStatus || biz.contactStatus === "idle")) return true;
+    return false;
+  });
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
@@ -563,18 +632,16 @@ export default function Dashboard() {
         <div className="flex items-center gap-2">
           {state.businesses.length > 0 && (
             <button
-              onClick={handleCallAll}
-              disabled={isAutoCalling}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
+              onClick={handleEnrichAll}
+              disabled={isEnrichingAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
             >
-              {isAutoCalling ? (
+              {isEnrichingAll ? (
                 <Loader2Icon className="size-3 animate-spin" />
               ) : (
-                <PhoneIcon className="size-3" />
+                <SparklesIcon className="size-3" />
               )}
-              {isAutoCalling
-                ? `Calling ${(state.autoCallingIndex ?? 0) + 1}/${state.businesses.filter((b) => b.phone && b.callStatus === "idle").length}`
-                : "Call All"}
+              {isEnrichingAll ? "Enriching..." : "Enrich All"}
             </button>
           )}
         </div>
@@ -615,18 +682,96 @@ export default function Dashboard() {
         </form>
       </div>
 
+      {/* ── Filters ──────────────────────────────────────────── */}
+      {state.businesses.length > 0 && (
+        <div className="px-6 py-2 border-b border-border flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground mr-1">Filter:</span>
+          {[
+            { key: "interested", label: "Interested", color: "bg-green-500/20 text-green-400 border-green-500/30" },
+            { key: "not_interested", label: "Not Interested", color: "bg-red-500/20 text-red-400 border-red-500/30" },
+            { key: "unreachable", label: "Unreachable", color: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30" },
+            { key: "contacted", label: "Contacted", color: "bg-sky-500/20 text-sky-400 border-sky-500/30" },
+            { key: "contact_failed", label: "Contact Failed", color: "bg-red-500/20 text-red-400 border-red-500/30" },
+            { key: "enriched", label: "Enriched", color: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+            { key: "not_started", label: "Not Started", color: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30" },
+          ].map((f) => (
+            <button
+              key={f.key}
+              onClick={() => toggleFilter(f.key)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                activeFilters.has(f.key)
+                  ? f.color
+                  : "bg-muted/30 text-muted-foreground border-border hover:bg-muted/50"
+              }`}
+            >
+              <span className={`size-2.5 rounded-sm border ${
+                activeFilters.has(f.key)
+                  ? "bg-current border-current"
+                  : "border-muted-foreground/40"
+              }`} />
+              {f.label}
+            </button>
+          ))}
+          {activeFilters.size > 0 && (
+            <button
+              onClick={() => setActiveFilters(new Set())}
+              className="text-[11px] text-muted-foreground hover:text-foreground ml-1 transition-colors"
+            >
+              Clear
+            </button>
+          )}
+          <span className="text-[11px] text-muted-foreground/50 ml-auto">
+            {filteredBusinesses.length} of {state.businesses.length}
+          </span>
+        </div>
+      )}
+
       {/* ── Main Content ───────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
         {/* ── Business Table ──────────────────────────────────── */}
         <div className="flex-1 overflow-auto p-6">
-          {state.businesses.length === 0 && state.searchStatus !== "loading" ? (
+          {state.searchStatus === "loading" && state.businesses.length === 0 ? (
+            <div className="overflow-x-auto rounded-none border border-border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-muted-foreground text-xs">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium w-6"></th>
+                    <th className="px-3 py-2 text-left font-medium">Name</th>
+                    <th className="px-3 py-2 text-left font-medium">Phone</th>
+                    <th className="px-3 py-2 text-left font-medium">Address</th>
+                    <th className="px-3 py-2 text-left font-medium">Status</th>
+                    <th className="px-3 py-2 text-right font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} className="animate-pulse">
+                      <td className="px-3 py-3"><div className="h-3.5 w-3.5 bg-muted rounded" /></td>
+                      <td className="px-3 py-3">
+                        <div className="h-4 bg-muted rounded w-36 mb-1.5" />
+                        <div className="h-3 bg-muted/60 rounded w-20" />
+                      </td>
+                      <td className="px-3 py-3"><div className="h-3.5 bg-muted rounded w-28" /></td>
+                      <td className="px-3 py-3"><div className="h-3.5 bg-muted rounded w-40" /></td>
+                      <td className="px-3 py-3"><div className="h-5 bg-muted rounded-full w-16" /></td>
+                      <td className="px-3 py-3">
+                        <div className="flex justify-end gap-1">
+                          <div className="h-6 w-6 bg-muted rounded" />
+                          <div className="h-6 w-6 bg-muted rounded" />
+                          <div className="h-6 w-6 bg-muted rounded" />
+                          <div className="h-6 w-6 bg-muted rounded" />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : state.businesses.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <SearchIcon className="size-12 mb-4 opacity-30" />
-              <p className="text-lg font-medium">No businesses yet</p>
-              <p className="text-sm mt-1">
-                Search for businesses to get started
-              </p>
-              <div className="flex gap-2 mt-4">
+              <SearchIcon className="size-24 mb-6 opacity-20" />
+              <p className="text-2xl font-semibold">Look for businesses to connect with</p>
+              <div className="flex gap-2 mt-6">
                 {[
                   "coffee shops in New York",
                   "dentists in San Francisco",
@@ -659,7 +804,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {state.businesses.map((biz) => (
+                  {filteredBusinesses.map((biz) => (
                     <Fragment key={biz.id}>
                     <tr
                       className={`hover:bg-muted/30 transition-colors cursor-pointer ${
@@ -667,7 +812,9 @@ export default function Dashboard() {
                           ? "bg-green-500/5"
                           : biz.callStatus === "not_interested"
                             ? "bg-red-500/5"
-                            : ""
+                            : biz.contactOutcome === "contacted"
+                              ? "bg-sky-500/5"
+                              : ""
                       }`}
                       onClick={() => setExpandedRow(expandedRow === biz.id ? null : biz.id)}
                     >
@@ -698,15 +845,6 @@ export default function Dashboard() {
                               {biz.category}
                             </span>
                           )}
-                          {biz.source && (
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
-                              biz.source === "Exa"
-                                ? "bg-violet-500/20 text-violet-400"
-                                : "bg-blue-500/20 text-blue-400"
-                            }`}>
-                              {biz.source}
-                            </span>
-                          )}
                         </div>
                       </td>
                       <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
@@ -718,6 +856,7 @@ export default function Dashboard() {
                       <td className="px-3 py-2.5">
                         <div className="flex flex-col gap-1">
                           <EnrichBadge status={biz.enrichmentStatus} />
+                          <ContactBadge status={biz.contactStatus} outcome={biz.contactOutcome} />
                           <CallBadge status={biz.callStatus} />
                         </div>
                       </td>
@@ -757,20 +896,20 @@ export default function Dashboard() {
                             <SparklesIcon className="size-3.5" />
                           </button>
 
-                          {/* Deep enrich */}
+                          {/* Deep enrich (contact) */}
                           <button
                             onClick={() => handleEnrich(biz, "deep")}
-                            disabled={biz.enrichmentStatus === "running"}
-                            title="Deep research (Stagehand browser)"
+                            disabled={biz.contactStatus === "running"}
+                            title="Contact business (Stagehand browser)"
                             className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
                           >
-                            <TelescopeIcon className="size-3.5" />
+                            <MousePointerIcon className="size-3.5" />
                           </button>
 
                           {/* Call */}
                           <button
                             onClick={() => handleCall(biz)}
-                            disabled={!biz.phone || biz.callStatus === "calling" || isAutoCalling}
+                            disabled={!biz.phone || biz.callStatus === "calling"}
                             title="Call this business"
                             className="p-1.5 rounded hover:bg-green-500/20 text-green-500 hover:text-green-400 disabled:opacity-30 disabled:text-muted-foreground transition-colors"
                           >
@@ -830,7 +969,7 @@ export default function Dashboard() {
                                 </div>
                               ) : (
                                 <p className="text-muted-foreground/50">
-                                  Click the sparkle or telescope icon to enrich this business.
+                                  Click the sparkle or cursor icon to enrich this business.
                                 </p>
                               )}
                             </div>

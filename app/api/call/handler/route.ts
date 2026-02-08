@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Play>${baseUrl}/api/call/audio?text=${encodedText}</Play>
-  <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="15" />
+  <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="10" speechModel="deepgram:nova-2" />
   <Say voice="Polly.Matthew">Sorry, I didn't catch that. Let me try again.</Say>
   <Redirect method="POST">${baseUrl}/api/call/handler</Redirect>
 </Response>`;
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Play>${baseUrl}/api/call/audio?id=${encodeURIComponent(audioId)}</Play>
-  <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="15" />
+  <Gather input="speech" action="${baseUrl}/api/call/handler" method="POST" speechTimeout="auto" language="en-US" timeout="10" speechModel="deepgram:nova-2" />
   <Say voice="Polly.Matthew">Sorry, I didn't catch that.</Say>
   <Redirect method="POST">${baseUrl}/api/call/handler</Redirect>
 </Response>`;
